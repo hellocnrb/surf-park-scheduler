@@ -1,0 +1,110 @@
+version: "1.0"
+last_updated: "2026-02-14"
+description: "Coaching requirements rules for Austin Park Surf"
+
+session_types:
+  Beginner:
+    capacity: 20
+    baseline_rules:
+      - guest_range: [0, 0]
+        baseline_coaches: 0
+        notes: "Empty session requires no coaches"
+      - guest_range: [1, 14]
+        baseline_coaches: 2
+        notes: "Pusher + Tutor required for 1-14 guests"
+      - guest_range: [15, 999]
+        baseline_coaches: 3
+        notes: "Add Flowter for 15+ guests"
+    coach_roles: ["pusher", "tutor", "flowter"]
+    
+  Novice:
+    capacity: 19
+    baseline_rules:
+      - guest_range: [0, 0]
+        baseline_coaches: 0
+      - guest_range: [1, 14]
+        baseline_coaches: 2
+        notes: "Pusher + Tutor required for 1-14 guests"
+      - guest_range: [15, 999]
+        baseline_coaches: 3
+        notes: "Add Flowter for 15+ guests"
+    coach_roles: ["pusher", "tutor", "flowter"]
+    
+  Progressive:
+    capacity: 18
+    baseline_rules:
+      - guest_range: [0, 0]
+        baseline_coaches: 0
+      - guest_range: [1, 9]
+        baseline_coaches: 1
+        notes: "One coach for 1-9 guests"
+      - guest_range: [10, 999]
+        baseline_coaches: 2
+        notes: "Add Flowter for 10+ guests"
+    coach_roles: ["coach", "flowter"]
+    
+  Intermediate:
+    capacity: 13
+    baseline_rules:
+      - guest_range: [0, 999]
+        baseline_coaches: 0
+        notes: "Advanced riders - no baseline coaching needed"
+    coach_roles: []
+    
+  Advanced:
+    capacity: 12
+    baseline_rules:
+      - guest_range: [0, 999]
+        baseline_coaches: 0
+        notes: "Advanced riders - no baseline coaching needed"
+    coach_roles: []
+    
+  Expert:
+    capacity: 12
+    baseline_rules:
+      - guest_range: [0, 999]
+        baseline_coaches: 0
+        notes: "Expert riders - no baseline coaching needed"
+    coach_roles: []
+    
+  Pro:
+    capacity: 10
+    baseline_rules:
+      - guest_range: [0, 999]
+        baseline_coaches: 0
+        notes: "Pro riders - no baseline coaching needed"
+    coach_roles: []
+    
+  Pro_Barrel:
+    capacity: 10  # Configurable - can be updated as needed
+    baseline_rules:
+      - guest_range: [0, 999]
+        baseline_coaches: 0
+        notes: "Pro barrel riders - no baseline coaching needed"
+    coach_roles: []
+
+private_lessons:
+  coaches_per_lesson: 1
+  can_group: false  # Future feature: allow grouping multiple private lessons
+  notes: "Each private lesson requires one dedicated 1:1 coach"
+
+operational_settings:
+  coach_arrival_minutes_before_session: 30
+  sides: ["LEFT", "RIGHT"]
+  session_duration_minutes: 60
+  notes: "Coaches arrive 30 minutes before session start for setup and briefing"
+
+# Future configuration sections (Phase 3):
+# 
+# coach_constraints:
+#   max_consecutive_hours: 4
+#   min_break_minutes: 30
+#   max_daily_hours: 8
+#   
+# skill_requirements:
+#   Beginner:
+#     min_skill_level: 4
+#     preferred_skill_level: 5
+#   Novice:
+#     min_skill_level: 4
+#     preferred_skill_level: 5
