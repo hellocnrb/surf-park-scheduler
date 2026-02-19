@@ -339,6 +339,7 @@ with tab2:
                     st.session_state.last_sync = datetime.now()
 
 st.markdown('---')
-st.caption('🏄 Surf Park Schedule Manager | Cloud Edition')
+st.caption('🏄 Surf Park Schedule Manager | v1.1 - Cloud Edition | Feb 19, 2026')
 
-st.caption('🏄 Surf Park Schedule Manager | Cloud Edition')
+st.caption('🏄 Surf Park Schedule Manager | v1.1 - Cloud Edition | Feb 19, 2026')
+
