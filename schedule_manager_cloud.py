@@ -141,6 +141,39 @@ def load_coach_roster_from_sheets(gc, sheet_id):
     except:
         return ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
 
+def get_sync_health(gc, weekly_sheet_id, assignments_sheet_id, roster_sheet_id):
+    """Return basic sync diagnostics for configured Google Sheets resources."""
+    health = {
+        'google_client_ready': gc is not None,
+        'weekly_sheet_id_set': bool(weekly_sheet_id),
+        'assignments_sheet_id_set': bool(assignments_sheet_id),
+        'roster_sheet_id_set': bool(roster_sheet_id),
+        'weekly_sheet_rows': None,
+        'assignments_sheet_rows': None,
+        'roster_sheet_rows': None,
+        'errors': []
+    }
+
+    if not gc:
+        health['errors'].append('Google Sheets client not initialized')
+        return health
+
+    def fetch_row_count(sheet_id, sheet_name):
+        if not sheet_id:
+            health['errors'].append(f'{sheet_name} sheet ID missing')
+            return None
+        try:
+            return len(gc.open_by_key(sheet_id).sheet1.get_all_values())
+        except Exception as e:
+            health['errors'].append(f'{sheet_name} check failed: {e}')
+            return None
+
+    health['weekly_sheet_rows'] = fetch_row_count(weekly_sheet_id, 'Weekly')
+    health['assignments_sheet_rows'] = fetch_row_count(assignments_sheet_id, 'Assignments')
+    health['roster_sheet_rows'] = fetch_row_count(roster_sheet_id, 'Roster')
+
+    return health
+
 def save_coach_roster_to_sheets(gc, sheet_id, roster):
     try:
         sheet = gc.open_by_key(sheet_id).sheet1
@@ -189,6 +222,25 @@ except:
     WEEKLY_SHEET_ID = ASSIGNMENTS_SHEET_ID = ROSTER_SHEET_ID = ''
 
 st.markdown('<div class="main-header">🏄 Surf Park Scheduler</div>', unsafe_allow_html=True)
+
+with st.expander('🩺 Sync Health', expanded=False):
+    sync_health = get_sync_health(gc, WEEKLY_SHEET_ID, ASSIGNMENTS_SHEET_ID, ROSTER_SHEET_ID)
+    st.write(f"Google client: {'✅ Ready' if sync_health['google_client_ready'] else '❌ Not ready'}")
+    st.write(f"Weekly sheet ID: {'✅ Set' if sync_health['weekly_sheet_id_set'] else '❌ Missing'}")
+    st.write(f"Assignments sheet ID: {'✅ Set' if sync_health['assignments_sheet_id_set'] else '❌ Missing'}")
+    st.write(f"Roster sheet ID: {'✅ Set' if sync_health['roster_sheet_id_set'] else '❌ Missing'}")
+
+    st.caption(
+        f"Row counts → Weekly: {sync_health['weekly_sheet_rows'] if sync_health['weekly_sheet_rows'] is not None else 'N/A'} | "
+        f"Assignments: {sync_health['assignments_sheet_rows'] if sync_health['assignments_sheet_rows'] is not None else 'N/A'} | "
+        f"Roster: {sync_health['roster_sheet_rows'] if sync_health['roster_sheet_rows'] is not None else 'N/A'}"
+    )
+
+    if sync_health['errors']:
+        for error in sync_health['errors']:
+            st.warning(error)
+    else:
+        st.success('All sync checks passed')
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -339,7 +391,5 @@ with tab2:
                     st.session_state.last_sync = datetime.now()
 
 st.markdown('---')
-st.caption('🏄 Surf Park Schedule Manager | v1.1 - Cloud Edition | Feb 19, 2026')
-
 st.caption('🏄 Surf Park Schedule Manager | v1.1 - Cloud Edition | Feb 19, 2026')
 
