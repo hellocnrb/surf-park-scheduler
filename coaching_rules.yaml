@@ -36,10 +36,10 @@ session_types:
       - guest_range: [0, 0]
         baseline_coaches: 0
       - guest_range: [1, 9]
-        baseline_coaches: 1
-        notes: "One coach for 1-9 guests"
+        baseline_coaches: 0
+        notes: "No coaches for 1-9 guests"
       - guest_range: [10, 999]
-        baseline_coaches: 2
+        baseline_coaches: 1
         notes: "Add Flowter for 10+ guests"
     coach_roles: ["coach", "flowter"]
     
