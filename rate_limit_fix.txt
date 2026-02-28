@@ -1,0 +1,36 @@
+﻿# Add this near the top of schedule_manager_cloud.py, after imports (around line 20)
+
+import time
+from functools import wraps
+
+# Rate limiting decorator
+def rate_limit(calls=1, period=1):
+    def decorator(func):
+        last_called = [0.0]
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            elapsed = time.time() - last_called[0]
+            if elapsed < period:
+                time.sleep(period - elapsed)
+            result = func(*args, **kwargs)
+            last_called[0] = time.time()
+            return result
+        return wrapper
+    return decorator
+
+# Add rate limiting to all Google Sheets functions
+@rate_limit(calls=1, period=2)  # Max 1 call per 2 seconds
+def load_weekly_schedule_from_sheets(gc, sheet_id):
+    # ... existing code ...
+
+@rate_limit(calls=1, period=2)
+def save_weekly_schedule_to_sheets(gc, sheet_id, schedule, week_start):
+    # ... existing code ...
+
+@rate_limit(calls=1, period=2)
+def load_coach_assignments_from_sheets(gc, sheet_id):
+    # ... existing code ...
+
+@rate_limit(calls=1, period=2)
+def save_coach_assignments_to_sheets(gc, sheet_id, assignments):
+    # ... existing code ...

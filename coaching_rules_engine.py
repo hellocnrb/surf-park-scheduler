@@ -1,397 +1,491 @@
 """
-Surf Park Schedule Manager - Cloud Edition
-Web-based with Google Sheets integration for multi-user access
-Optimized for mobile and desktop
+Surf Park Coaching Rules Engine
+Implementation of deterministic coaching requirement calculations
 """
 
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-from datetime import datetime, date, timedelta
-from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Literal
 import yaml
-import io
-import json
-import os
 
-from coaching_rules_engine import CoachingRulesEngine
 
-st.set_page_config(page_title="Surf Schedule", page_icon="🏄", layout="wide", initial_sidebar_state="collapsed")
-
-st.markdown('''
-<style>
-@media (max-width: 768px) {
-    .main-header { font-size: 1.5rem !important; }
-    .stButton>button { width: 100%; padding: 0.75rem; }
-}
-.main-header { font-size: 2rem; font-weight: bold; color: #1f77b4; text-align: center; margin-bottom: 1rem; }
-.left-side { background-color: #8B4513; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem; }
-.right-side { background-color: #2F4F4F; color: white; padding: 1rem; border-radius: 0.5rem; margin-bottom: 0.5rem; }
-</style>
-''', unsafe_allow_html=True)
-
-def get_google_sheets_client():
-    try:
-        # Try environment variables (Replit)
-        if 'gcp_service_account' in os.environ:
-            creds_dict = json.loads(os.environ['gcp_service_account'])
-        # Try Streamlit secrets
-        elif hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
-            creds_dict = dict(st.secrets['gcp_service_account'])
-        else:
-            st.error("No credentials found in environment or secrets")
-            return None
-        
-        from google.oauth2.service_account import Credentials
-        import gspread
-        
-        creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        )
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"Error initializing Google Sheets: {e}")
-        return None
-
-def load_weekly_schedule_from_sheets(gc, sheet_id):
-    try:
-        sheet = gc.open_by_key(sheet_id).sheet1
-        data = sheet.get_all_values()
-        if len(data) < 2:
-            return {}
-        dates = []
-        for col in data[0][1:]:
-            try:
-                dates.append(datetime.strptime(col, '%Y-%m-%d').date())
-            except:
-                continue
-        schedule = {}
-        for row in data[1:]:
-            if not row or not row[0]:
-                continue
-            coach = row[0]
-            schedule[coach] = {}
-            for i, date_val in enumerate(dates):
-                try:
-                    val = row[i + 1] if i + 1 < len(row) else 'available'
-                    schedule[coach][date_val] = val if val else 'available'
-                except:
-                    schedule[coach][date_val] = 'available'
-        return schedule
-    except Exception as e:
-        st.error(f"Error loading schedule: {e}")
-        return {}
-
-def save_weekly_schedule_to_sheets(gc, sheet_id, schedule, week_start):
-    try:
-        sheet = gc.open_by_key(sheet_id).sheet1
-        dates = [week_start + timedelta(days=i) for i in range(7)]
-        header = ['Coach'] + [d.strftime('%Y-%m-%d') for d in dates]
-        rows = [header]
-        for coach in sorted(schedule.keys()):
-            row = [coach]
-            for d in dates:
-                row.append(schedule[coach].get(d, 'available'))
-            rows.append(row)
-        sheet.clear()
-        sheet.update('A1', rows)
-        return True
-    except Exception as e:
-        st.error(f"Error saving: {e}")
-        return False
-
-def load_coach_assignments_from_sheets(gc, sheet_id):
-    try:
-        sheet = gc.open_by_key(sheet_id).sheet1
-        data = sheet.get_all_values()
-        if len(data) < 2:
-            return {}
-        assignments = {}
-        for row in data[1:]:
-            if len(row) >= 4:
-                try:
-                    dt = datetime.strptime(row[0], '%Y-%m-%d %H:%M:%S')
-                    assignments[(dt, row[1], row[2])] = row[3]
-                except:
-                    continue
-        return assignments
-    except Exception as e:
-        st.error(f"Error loading assignments: {e}")
-        return {}
-
-def save_coach_assignments_to_sheets(gc, sheet_id, assignments):
-    try:
-        sheet = gc.open_by_key(sheet_id).sheet1
-        rows = [['DateTime', 'Side', 'Role', 'Coach']]
-        for (dt, side, role), coach in assignments.items():
-            rows.append([dt.strftime('%Y-%m-%d %H:%M:%S'), side, role, coach])
-        sheet.clear()
-        sheet.update('A1', rows)
-        return True
-    except Exception as e:
-        st.error(f"Error saving assignments: {e}")
-        return False
-
-def load_coach_roster_from_sheets(gc, sheet_id):
-    try:
-        sheet = gc.open_by_key(sheet_id).sheet1
-        data = sheet.get_all_values()
-        return [row[0] for row in data[1:] if row and row[0]]
-    except:
-        return ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
-
-def get_sync_health(gc, weekly_sheet_id, assignments_sheet_id, roster_sheet_id):
-    """Return basic sync diagnostics for configured Google Sheets resources."""
-    health = {
-        'google_client_ready': gc is not None,
-        'weekly_sheet_id_set': bool(weekly_sheet_id),
-        'assignments_sheet_id_set': bool(assignments_sheet_id),
-        'roster_sheet_id_set': bool(roster_sheet_id),
-        'weekly_sheet_rows': None,
-        'assignments_sheet_rows': None,
-        'roster_sheet_rows': None,
-        'errors': []
-    }
-
-    if not gc:
-        health['errors'].append('Google Sheets client not initialized')
-        return health
-
-    def fetch_row_count(sheet_id, sheet_name):
-        if not sheet_id:
-            health['errors'].append(f'{sheet_name} sheet ID missing')
-            return None
-        try:
-            return len(gc.open_by_key(sheet_id).sheet1.get_all_values())
-        except Exception as e:
-            health['errors'].append(f'{sheet_name} check failed: {e}')
-            return None
-
-    health['weekly_sheet_rows'] = fetch_row_count(weekly_sheet_id, 'Weekly')
-    health['assignments_sheet_rows'] = fetch_row_count(assignments_sheet_id, 'Assignments')
-    health['roster_sheet_rows'] = fetch_row_count(roster_sheet_id, 'Roster')
-
-    return health
-
-def save_coach_roster_to_sheets(gc, sheet_id, roster):
-    try:
-        sheet = gc.open_by_key(sheet_id).sheet1
-        rows = [['Coach Name']] + [[coach] for coach in roster]
-        sheet.clear()
-        sheet.update('A1', rows)
-        return True
-    except Exception as e:
-        st.error(f"Error saving roster: {e}")
-        return False
-
-def load_engine():
-    with open('coaching_rules.yaml') as f:
-        return CoachingRulesEngine(yaml.safe_load(f))
-
-def process_csv(f):
-    df = pd.read_csv(f)
-    return [{'datetime_start': pd.to_datetime(r['datetime_start']), 'side': r['side'], 
-             'session_type': r['session_type'], 'booked_guests': int(r['booked_guests']),
-             'private_lessons_count': int(r.get('private_lessons_count', 0))} for _, r in df.iterrows()]
-
-gc = get_google_sheets_client()
-
-if 'processed_sessions' not in st.session_state:
-    st.session_state.processed_sessions = None
-if 'weekly_schedule' not in st.session_state:
-    st.session_state.weekly_schedule = {}
-if 'coach_assignments' not in st.session_state:
-    st.session_state.coach_assignments = {}
-if 'coach_roster' not in st.session_state:
-    st.session_state.coach_roster = ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
-if 'last_sync' not in st.session_state:
-    st.session_state.last_sync = None
-
-# Get sheet IDs from environment or secrets
-try:
-    if 'weekly_schedule_sheet_id' in os.environ:
-        WEEKLY_SHEET_ID = os.environ['weekly_schedule_sheet_id']
-        ASSIGNMENTS_SHEET_ID = os.environ['assignments_sheet_id']
-        ROSTER_SHEET_ID = os.environ['roster_sheet_id']
-    else:
-        WEEKLY_SHEET_ID = st.secrets.get('weekly_schedule_sheet_id', '')
-        ASSIGNMENTS_SHEET_ID = st.secrets.get('assignments_sheet_id', '')
-        ROSTER_SHEET_ID = st.secrets.get('roster_sheet_id', '')
-except:
-    WEEKLY_SHEET_ID = ASSIGNMENTS_SHEET_ID = ROSTER_SHEET_ID = ''
-
-st.markdown('<div class="main-header">🏄 Surf Park Scheduler</div>', unsafe_allow_html=True)
-
-with st.expander('🩺 Sync Health', expanded=False):
-    sync_health = get_sync_health(gc, WEEKLY_SHEET_ID, ASSIGNMENTS_SHEET_ID, ROSTER_SHEET_ID)
-    st.write(f"Google client: {'✅ Ready' if sync_health['google_client_ready'] else '❌ Not ready'}")
-    st.write(f"Weekly sheet ID: {'✅ Set' if sync_health['weekly_sheet_id_set'] else '❌ Missing'}")
-    st.write(f"Assignments sheet ID: {'✅ Set' if sync_health['assignments_sheet_id_set'] else '❌ Missing'}")
-    st.write(f"Roster sheet ID: {'✅ Set' if sync_health['roster_sheet_id_set'] else '❌ Missing'}")
-
-    st.caption(
-        f"Row counts → Weekly: {sync_health['weekly_sheet_rows'] if sync_health['weekly_sheet_rows'] is not None else 'N/A'} | "
-        f"Assignments: {sync_health['assignments_sheet_rows'] if sync_health['assignments_sheet_rows'] is not None else 'N/A'} | "
-        f"Roster: {sync_health['roster_sheet_rows'] if sync_health['roster_sheet_rows'] is not None else 'N/A'}"
-    )
-
-    if sync_health['errors']:
-        for error in sync_health['errors']:
-            st.warning(error)
-    else:
-        st.success('All sync checks passed')
-
-col1, col2 = st.columns([3, 1])
-with col1:
-    if st.session_state.last_sync:
-        st.caption(f"📡 Last synced: {st.session_state.last_sync.strftime('%I:%M %p')}")
-    else:
-        st.caption("📡 Not synced yet")
-with col2:
-    if st.button("🔄 Sync", use_container_width=True):
-        if gc and WEEKLY_SHEET_ID:
-            with st.spinner("Syncing..."):
-                try:
-                    st.session_state.weekly_schedule = load_weekly_schedule_from_sheets(gc, WEEKLY_SHEET_ID)
-                    st.session_state.coach_assignments = load_coach_assignments_from_sheets(gc, ASSIGNMENTS_SHEET_ID)
-                    st.session_state.coach_roster = load_coach_roster_from_sheets(gc, ROSTER_SHEET_ID)
-                    st.session_state.last_sync = datetime.now()
-                    st.success("✅ Synced!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Sync failed: {e}")
-        else:
-            st.error("Google Sheets not configured")
-
-with st.sidebar:
-    st.header('📁 Upload')
-    up = st.file_uploader('Sessions CSV', type=['csv'])
-    if up:
-        eng = load_engine()
-        proc, _ = eng.process_csv_data(process_csv(up))
-        if proc:
-            st.session_state.processed_sessions = proc
-            st.success(f'✅ {len(proc)} sessions')
+@dataclass
+class Session:
+    """One side of lagoon for one hour"""
+    datetime_start: datetime
+    side: Literal["LEFT", "RIGHT"]
+    session_type: str
+    booked_guests: int
+    private_lessons_count: int
     
-    if st.button('📊 Load Sample'):
-        try:
-            eng = load_engine()
-            proc, _ = eng.process_csv_data(process_csv(open('sample_sessions.csv', 'rb')))
-            st.session_state.processed_sessions = proc
-            st.success('✅ Loaded')
-        except:
-            st.error('Sample not found')
+    # Computed fields (calculated by rules engine)
+    baseline_coaches: int = 0
+    private_coaches: int = 0
+    total_coaches_required: int = 0
+    coach_start_time: datetime = None
+    is_no_coach_required: bool = False
 
-tab1, tab2 = st.tabs(['📅 Weekly', '📋 Daily'])
 
-with tab1:
-    st.header('📅 Weekly Schedule')
-    with st.expander("👥 Manage Coaches"):
-        new = st.text_input('Add Coach')
-        if st.button('➕ Add') and new:
-            if new not in st.session_state.coach_roster:
-                st.session_state.coach_roster.append(new)
-                if gc and ROSTER_SHEET_ID:
-                    save_coach_roster_to_sheets(gc, ROSTER_SHEET_ID, st.session_state.coach_roster)
-                st.success(f'Added {new}')
-                st.rerun()
-        if st.session_state.coach_roster:
-            st.info(f'📋 {", ".join(st.session_state.coach_roster)}')
+class CoachingRulesEngine:
+    """Deterministic rules engine for coaching requirements"""
     
-    ws = st.date_input('Week Starting', value=date.today())
-    dates = [ws + timedelta(days=i) for i in range(7)]
-    st.caption('💡 Enter time ranges (e.g., "9-5"), "off", or "available"')
-    
-    data = []
-    for coach in st.session_state.coach_roster:
-        row = {'Coach': coach}
-        for d in dates:
-            row[d.strftime('%a %m/%d')] = st.session_state.weekly_schedule.get(coach, {}).get(d, 'available')
-        data.append(row)
-    
-    df = pd.DataFrame(data)
-    edited = st.data_editor(df, use_container_width=True, num_rows='fixed', hide_index=True)
-    
-    if st.button('💾 Save to Cloud', type='primary'):
-        for _, row in edited.iterrows():
-            coach = row['Coach']
-            if coach not in st.session_state.weekly_schedule:
-                st.session_state.weekly_schedule[coach] = {}
-            for d in dates:
-                st.session_state.weekly_schedule[coach][d] = row[d.strftime('%a %m/%d')]
-        if gc and WEEKLY_SHEET_ID:
-            if save_weekly_schedule_to_sheets(gc, WEEKLY_SHEET_ID, st.session_state.weekly_schedule, ws):
-                st.success('✅ Saved!')
-                st.session_state.last_sync = datetime.now()
-
-with tab2:
-    st.header('📋 Daily')
-    if not st.session_state.processed_sessions:
-        st.info('👈 Upload sessions CSV or load sample')
-    else:
-        sess = st.session_state.processed_sessions
-        dates_avail = sorted(set(s.datetime_start.date() for s in sess))
-        sel_date = st.selectbox('Date', dates_avail, format_func=lambda d: d.strftime('%A, %B %d'))
+    def __init__(self, config: Dict):
+        """
+        Initialize rules engine with configuration dictionary.
         
-        with st.expander("👥 Staff Today", expanded=True):
-            staff = []
-            for coach, schedule in st.session_state.weekly_schedule.items():
-                if sel_date in schedule and schedule[sel_date] != 'off':
-                    staff.append({'Staff': coach, 'Hours': schedule[sel_date]})
-            if staff:
-                st.table(pd.DataFrame(staff))
+        Args:
+            config: Dictionary containing session_types, private_lessons, 
+                   and operational_settings
+        """
+        self.config = config
+        self.session_types = self.config['session_types']
+        self.private_config = self.config['private_lessons']
+        self.ops_settings = self.config['operational_settings']
+    
+    @classmethod
+    def from_yaml(cls, config_path: str):
+        """Load configuration from YAML file"""
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        return cls(config)
+    
+    def calculate_baseline_coaches(
+        self, 
+        session_type: str, 
+        booked_guests: int
+    ) -> int:
+        """
+        Calculate baseline coaching requirement based on session type and guest count.
         
-        day_sess = [s for s in sess if s.datetime_start.date() == sel_date]
-        by_hour = defaultdict(list)
-        for s in day_sess:
-            by_hour[s.datetime_start.hour].append(s)
+        Business Rules:
+        - Beginner/Novice: 0 for 0 guests, 2 for 1-14 guests, 3 for 15+ guests
+        - Progressive: 0 for 0 guests, 1 for 1-9 guests, 2 for 10+ guests
+        - Intermediate/Advanced/Expert/Pro/Pro_Barrel: 0 regardless of guests
         
-        for hour in sorted(by_hour.keys()):
-            main = by_hour[hour][0]
-            st.markdown(f"### {main.datetime_start.strftime('%I:%M%p').lower()} - {main.session_type}")
+        Args:
+            session_type: Name of session type (e.g., "Beginner", "Pro")
+            booked_guests: Number of guests booked
             
-            for s in by_hour[hour]:
-                with st.container():
-                    st.markdown(f'''<div class='{"left-side" if s.side == "LEFT" else "right-side"}'>
-                        <strong>{s.side}</strong> - {s.booked_guests} guests
-                    </div>''', unsafe_allow_html=True)
-                    
-                    roles = []
-                    if s.session_type in ['Beginner', 'Novice'] and s.baseline_coaches >= 2:
-                        roles = ['Pusher', 'Tutor']
-                        if s.baseline_coaches >= 3:
-                            roles.append('Flowter')
-                    elif s.session_type == 'Progressive' and s.baseline_coaches >= 1:
-                        roles = ['Coach']
-                        if s.baseline_coaches >= 2:
-                            roles.append('Flowter')
-                    for i in range(s.private_lessons_count):
-                        roles.append(f'Private {i+1}')
-                    
-                    if roles:
-                        for role in roles:
-                            key = (s.datetime_start, s.side, role)
-                            assigned = st.session_state.coach_assignments.get(key, '')
-                            opts = ['-- Unassigned --'] + st.session_state.coach_roster
-                            idx = opts.index(assigned) if assigned in st.session_state.coach_roster else 0
-                            new = st.selectbox(role, opts, index=idx, key=f'{hour}_{s.side}_{role}')
-                            if new != '-- Unassigned --':
-                                st.session_state.coach_assignments[key] = new
-                            elif key in st.session_state.coach_assignments:
-                                del st.session_state.coach_assignments[key]
-                    else:
-                        st.caption('*No coaches needed*')
-            st.markdown('---')
+        Returns:
+            Number of baseline coaches required (0-3)
+            
+        Raises:
+            ValueError: If session_type is not recognized
+        """
+        if session_type not in self.session_types:
+            raise ValueError(f"Unknown session type: {session_type}")
         
-        if st.button('💾 Save Assignments', type='primary'):
-            if gc and ASSIGNMENTS_SHEET_ID:
-                if save_coach_assignments_to_sheets(gc, ASSIGNMENTS_SHEET_ID, st.session_state.coach_assignments):
-                    st.success('✅ Saved!')
-                    st.session_state.last_sync = datetime.now()
+        rules = self.session_types[session_type]['baseline_rules']
+        
+        for rule in rules:
+            min_guests, max_guests = rule['guest_range']
+            if min_guests <= booked_guests <= max_guests:
+                return rule['baseline_coaches']
+        
+        # Should never reach here if config is complete
+        return 0
+    
+    def calculate_private_coaches(
+        self, 
+        private_lessons_count: int
+    ) -> int:
+        """
+        Calculate additional coaches needed for private lessons.
+        
+        Business Rule: Each private lesson requires 1 additional coach (1:1 ratio)
+        
+        Args:
+            private_lessons_count: Number of private lessons booked
+            
+        Returns:
+            Number of additional coaches needed
+        """
+        coaches_per_lesson = self.private_config['coaches_per_lesson']
+        return private_lessons_count * coaches_per_lesson
+    
+    def calculate_total_coaches(
+        self,
+        session_type: str,
+        booked_guests: int,
+        private_lessons_count: int
+    ) -> Tuple[int, int, int]:
+        """
+        Calculate total coaching requirement for a session.
+        
+        Formula: total_coaches = baseline_coaches + private_coaches
+        
+        Args:
+            session_type: Name of session type
+            booked_guests: Number of guests booked
+            private_lessons_count: Number of private lessons
+            
+        Returns:
+            Tuple of (baseline_coaches, private_coaches, total_coaches)
+        """
+        baseline = self.calculate_baseline_coaches(session_type, booked_guests)
+        private = self.calculate_private_coaches(private_lessons_count)
+        total = baseline + private
+        
+        return baseline, private, total
+    
+    def is_no_coach_required(
+        self,
+        session_type: str,
+        booked_guests: int,
+        private_lessons_count: int
+    ) -> bool:
+        """
+        Determine if session should be marked as "no coach required".
+        
+        Marking Conditions:
+        1. No guests AND no private lessons, OR
+        2. Session is Intermediate+ AND no private lessons
+        
+        Args:
+            session_type: Name of session type
+            booked_guests: Number of guests booked
+            private_lessons_count: Number of private lessons
+            
+        Returns:
+            True if no coaches needed (for formatting/display purposes)
+        """
+        advanced_types = ['Intermediate', 'Advanced', 'Expert', 'Pro', 'Pro_Barrel']
+        
+        # Condition 1: Nobody booked at all
+        if booked_guests == 0 and private_lessons_count == 0:
+            return True
+        
+        # Condition 2: Advanced session with no private lessons
+        # (these sessions have 0 baseline coaches by design)
+        if session_type in advanced_types and private_lessons_count == 0:
+            return True
+        
+        return False
+    
+    def calculate_coach_start_time(
+        self,
+        session_start: datetime
+    ) -> datetime:
+        """
+        Calculate when coaches should arrive (30 min before session by default).
+        
+        Args:
+            session_start: Session start datetime
+            
+        Returns:
+            Coach arrival datetime
+        """
+        minutes_before = self.ops_settings['coach_arrival_minutes_before_session']
+        return session_start - timedelta(minutes=minutes_before)
+    
+    def process_session(
+        self,
+        datetime_start: datetime,
+        side: str,
+        session_type: str,
+        booked_guests: int,
+        private_lessons_count: int = 0
+    ) -> Session:
+        """
+        Process a single session and return calculated Session object.
+        
+        This is the main entry point for processing a session row.
+        
+        Args:
+            datetime_start: Session start time
+            side: "LEFT" or "RIGHT"
+            session_type: Session type name
+            booked_guests: Number of booked guests
+            private_lessons_count: Number of private lessons (default 0)
+            
+        Returns:
+            Session object with all computed fields populated
+        """
+        baseline, private, total = self.calculate_total_coaches(
+            session_type, booked_guests, private_lessons_count
+        )
+        
+        no_coach_req = self.is_no_coach_required(
+            session_type, booked_guests, private_lessons_count
+        )
+        
+        coach_start = self.calculate_coach_start_time(datetime_start)
+        
+        return Session(
+            datetime_start=datetime_start,
+            side=side,
+            session_type=session_type,
+            booked_guests=booked_guests,
+            private_lessons_count=private_lessons_count,
+            baseline_coaches=baseline,
+            private_coaches=private,
+            total_coaches_required=total,
+            coach_start_time=coach_start,
+            is_no_coach_required=no_coach_req
+        )
+    
+    def validate_session(
+        self,
+        session_type: str,
+        booked_guests: int
+    ) -> List[str]:
+        """
+        Validate session data against business rules.
+        
+        Checks:
+        - Session type exists in configuration
+        - Booked guests <= capacity
+        - Booked guests >= 0
+        
+        Args:
+            session_type: Session type name
+            booked_guests: Number of booked guests
+            
+        Returns:
+            List of validation error messages (empty list if valid)
+        """
+        errors = []
+        
+        if session_type not in self.session_types:
+            errors.append(f"Unknown session type: {session_type}")
+            return errors
+        
+        capacity = self.session_types[session_type]['capacity']
+        if booked_guests > capacity:
+            errors.append(
+                f"Guests ({booked_guests}) exceeds capacity ({capacity}) "
+                f"for {session_type}"
+            )
+        
+        if booked_guests < 0:
+            errors.append(f"Negative guest count: {booked_guests}")
+        
+        return errors
+    
+    def process_csv_data(
+        self, 
+        sessions_data: List[Dict]
+    ) -> Tuple[List[Session], List[str]]:
+        """
+        Process multiple sessions from CSV-like data.
+        
+        Args:
+            sessions_data: List of dictionaries with keys:
+                          datetime_start, side, session_type, 
+                          booked_guests, private_lessons_count
+                          
+        Returns:
+            Tuple of (processed_sessions, validation_errors)
+        """
+        processed_sessions = []
+        all_errors = []
+        
+        for idx, row in enumerate(sessions_data):
+            # Validate first
+            errors = self.validate_session(
+                row['session_type'], 
+                row['booked_guests']
+            )
+            
+            if errors:
+                for error in errors:
+                    all_errors.append(f"Row {idx + 1}: {error}")
+                continue  # Skip processing invalid row
+            
+            # Process valid session
+            session = self.process_session(
+                datetime_start=row['datetime_start'],
+                side=row['side'],
+                session_type=row['session_type'],
+                booked_guests=row['booked_guests'],
+                private_lessons_count=row.get('private_lessons_count', 0)
+            )
+            processed_sessions.append(session)
+        
+        return processed_sessions, all_errors
 
-st.markdown('---')
-st.caption('🏄 Surf Park Schedule Manager | v1.1.3 - Cloud Edition | Feb 22, 2026')
+
+# Sample configuration that matches your requirements
+SAMPLE_CONFIG = {
+    "version": "1.0",
+    "session_types": {
+        "Beginner": {
+            "capacity": 20,
+            "baseline_rules": [
+                {"guest_range": [0, 0], "baseline_coaches": 0},
+                {"guest_range": [1, 14], "baseline_coaches": 2},
+                {"guest_range": [15, 999], "baseline_coaches": 3}
+            ]
+        },
+        "Novice": {
+            "capacity": 19,
+            "baseline_rules": [
+                {"guest_range": [0, 0], "baseline_coaches": 0},
+                {"guest_range": [1, 14], "baseline_coaches": 2},
+                {"guest_range": [15, 999], "baseline_coaches": 3}
+            ]
+        },
+        "Progressive": {
+            "capacity": 18,
+            "baseline_rules": [
+                {"guest_range": [0, 0], "baseline_coaches": 0},
+                {"guest_range": [1, 9], "baseline_coaches": 1},
+                {"guest_range": [10, 999], "baseline_coaches": 2}
+            ]
+        },
+        "Intermediate": {
+            "capacity": 13,
+            "baseline_rules": [
+                {"guest_range": [0, 999], "baseline_coaches": 0}
+            ]
+        },
+        "Advanced": {
+            "capacity": 12,
+            "baseline_rules": [
+                {"guest_range": [0, 999], "baseline_coaches": 0}
+            ]
+        },
+        "Expert": {
+            "capacity": 12,
+            "baseline_rules": [
+                {"guest_range": [0, 999], "baseline_coaches": 0}
+            ]
+        },
+        "Pro": {
+            "capacity": 10,
+            "baseline_rules": [
+                {"guest_range": [0, 999], "baseline_coaches": 0}
+            ]
+        },
+        "Pro_Barrel": {
+            "capacity": 10,
+            "baseline_rules": [
+                {"guest_range": [0, 999], "baseline_coaches": 0}
+            ]
+        }
+    },
+    "private_lessons": {
+        "coaches_per_lesson": 1,
+        "can_group": False
+    },
+    "operational_settings": {
+        "coach_arrival_minutes_before_session": 30,
+        "sides": ["LEFT", "RIGHT"]
+    }
+}
 
 
+def main():
+    """Example usage of the rules engine"""
+    
+    # Initialize engine with sample config
+    engine = CoachingRulesEngine(SAMPLE_CONFIG)
+    
+    # Example 1: Single session processing
+    print("=" * 80)
+    print("EXAMPLE 1: Processing Individual Sessions")
+    print("=" * 80)
+    
+    test_cases = [
+        ("Beginner", 5, 0, "Beginner with 5 guests, no private"),
+        ("Beginner", 15, 1, "Beginner with 15 guests, 1 private"),
+        ("Progressive", 9, 0, "Progressive with 9 guests (boundary)"),
+        ("Progressive", 10, 1, "Progressive with 10 guests, 1 private"),
+        ("Intermediate", 13, 0, "Intermediate at capacity, no private"),
+        ("Intermediate", 10, 2, "Intermediate with 10 guests, 2 private"),
+        ("Pro", 8, 0, "Pro with 8 guests, no private"),
+    ]
+    
+    for session_type, guests, private, description in test_cases:
+        baseline, private_coaches, total = engine.calculate_total_coaches(
+            session_type, guests, private
+        )
+        no_coach = engine.is_no_coach_required(session_type, guests, private)
+        
+        print(f"\n{description}:")
+        print(f"  Baseline: {baseline}, Private: {private_coaches}, Total: {total}")
+        print(f"  No coach required: {no_coach}")
+    
+    # Example 2: CSV-like batch processing
+    print("\n" + "=" * 80)
+    print("EXAMPLE 2: Processing CSV Data (Batch)")
+    print("=" * 80)
+    
+    sample_data = [
+        {
+            'datetime_start': datetime(2026, 2, 15, 11, 0, 0),
+            'side': 'LEFT',
+            'session_type': 'Pro',
+            'booked_guests': 6,
+            'private_lessons_count': 0
+        },
+        {
+            'datetime_start': datetime(2026, 2, 15, 11, 0, 0),
+            'side': 'RIGHT',
+            'session_type': 'Pro',
+            'booked_guests': 8,
+            'private_lessons_count': 0
+        },
+        {
+            'datetime_start': datetime(2026, 2, 15, 12, 0, 0),
+            'side': 'LEFT',
+            'session_type': 'Novice',
+            'booked_guests': 3,
+            'private_lessons_count': 0
+        },
+        {
+            'datetime_start': datetime(2026, 2, 15, 12, 0, 0),
+            'side': 'RIGHT',
+            'session_type': 'Novice',
+            'booked_guests': 7,
+            'private_lessons_count': 1
+        },
+    ]
+    
+    sessions, errors = engine.process_csv_data(sample_data)
+    
+    if errors:
+        print("\nValidation Errors:")
+        for error in errors:
+            print(f"  ❌ {error}")
+    
+    print(f"\nProcessed {len(sessions)} sessions successfully:")
+    print("\nTime | Side  | Type    | Guests | Private | Base | Priv | Total")
+    print("-" * 75)
+    for s in sessions:
+        time_str = s.datetime_start.strftime("%H:%M")
+        print(f"{time_str} | {s.side:5} | {s.session_type:8} | "
+              f"{s.booked_guests:6} | {s.private_lessons_count:7} | "
+              f"{s.baseline_coaches:4} | {s.private_coaches:4} | {s.total_coaches_required:5}")
+    
+    # Example 3: Hourly aggregation
+    print("\n" + "=" * 80)
+    print("EXAMPLE 3: Hourly Requirements Summary")
+    print("=" * 80)
+    
+    # Group by hour
+    from collections import defaultdict
+    hourly_reqs = defaultdict(lambda: {'left': 0, 'right': 0})
+    
+    for s in sessions:
+        hour = s.datetime_start.hour
+        if s.side == 'LEFT':
+            hourly_reqs[hour]['left'] = s.total_coaches_required
+        else:
+            hourly_reqs[hour]['right'] = s.total_coaches_required
+    
+    print("\nHour | Left | Right | Total")
+    print("-" * 35)
+    for hour in sorted(hourly_reqs.keys()):
+        left = hourly_reqs[hour]['left']
+        right = hourly_reqs[hour]['right']
+        total = left + right
+        marker = "⭐" if total >= 4 else "  "
+        print(f"{hour:02d}:00 | {left:4} | {right:5} | {total:5} {marker}")
+    
+    total_coaches = sum(h['left'] + h['right'] for h in hourly_reqs.values())
+    print(f"\nTotal coach-hours needed: {total_coaches}")
 
+
+if __name__ == "__main__":
+    main()
