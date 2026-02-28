@@ -1,10 +1,10 @@
-"""
+﻿"""
 Surf Park Schedule Manager - Cloud Edition
 Web-based with Google Sheets integration for multi-user access
 Optimized for mobile and desktop
 """
 
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, date, timedelta
@@ -391,6 +391,7 @@ with tab2:
                     st.session_state.last_sync = datetime.now()
 
 st.markdown('---')
-st.caption('🏄 Surf Park Schedule Manager | v1.1.2 - Cloud Edition | Feb 20, 2026')
+st.caption('🏄 Surf Park Schedule Manager | v1.1.3 - Cloud Edition | Feb 22, 2026')
+
 
 

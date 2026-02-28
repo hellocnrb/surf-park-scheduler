@@ -1,0 +1,13 @@
+datetime_start,hour,left_side_coaches,left_baseline,left_private,right_side_coaches,right_baseline,right_private,hourly_total,left_no_coach_required,right_no_coach_required,is_peak_hour
+2026-02-15 11:00:00,11,0,0,0,0,0,0,0,True,True,False
+2026-02-15 12:00:00,12,2,2,0,3,2,1,5,False,False,False
+2026-02-15 13:00:00,13,0,0,0,0,0,0,0,True,True,False
+2026-02-15 14:00:00,14,0,0,0,2,0,2,2,True,False,False
+2026-02-15 15:00:00,15,1,1,0,3,2,1,4,False,False,False
+2026-02-15 16:00:00,16,4,3,1,2,2,0,6,False,False,False
+2026-02-16 09:00:00,9,0,0,0,0,0,0,0,True,True,False
+2026-02-16 10:00:00,10,3,3,0,5,3,2,8,False,False,True
+2026-02-16 11:00:00,11,2,2,0,2,1,1,4,False,False,False
+2026-02-16 12:00:00,12,3,2,1,2,2,0,5,False,False,False
+2026-02-16 13:00:00,13,0,0,0,0,0,0,0,True,True,False
+2026-02-16 14:00:00,14,1,0,1,2,0,2,3,False,False,False
