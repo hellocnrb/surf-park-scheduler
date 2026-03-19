@@ -40,7 +40,7 @@ if not check_password():
 st.markdown('''
 <style>
 .main-header { font-size: 2rem; font-weight: bold; color: #1f77b4; text-align: center; margin: 1rem 0; }
-.date-badge { background: #e8f4f8; padding: 0.5rem 1rem; border-radius: 0.5rem; display: inline-block; margin: 0.5rem 0; font-weight: bold; }
+.date-badge { background: #1f77b4; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; display: inline-block; margin: 0.5rem 0; font-weight: bold; font-size: 1.2rem; }
 .session-card { background: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; border-left: 4px solid #1f77b4; }
 .left-side { background-color: #8B4513; color: white; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
 .right-side { background-color: #2F4F4F; color: white; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
