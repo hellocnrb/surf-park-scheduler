@@ -1,6 +1,6 @@
 """
 Surf Park Daily Schedule Builder
-For Head Coaches - Manual session creation and role assignment
+For Head Coaches - Multi-day scheduling with role assignment
 """
 
 import streamlit as st
@@ -11,7 +11,7 @@ import yaml
 import io
 import os
 
-st.set_page_config(page_title="Daily Schedule", page_icon="🏄", layout="wide")
+st.set_page_config(page_title="Schedule Builder", page_icon="🏄", layout="wide")
 
 # Password protection
 def check_password():
@@ -25,7 +25,7 @@ def check_password():
 
     if "password_correct" not in st.session_state:
         st.text_input("Head Coach Password", type="password", on_change=password_entered, key="password")
-        st.caption("Enter password to access daily schedule builder")
+        st.caption("Enter password to access schedule builder")
         return False
     elif not st.session_state["password_correct"]:
         st.text_input("Head Coach Password", type="password", on_change=password_entered, key="password")
@@ -40,10 +40,10 @@ if not check_password():
 st.markdown('''
 <style>
 .main-header { font-size: 2rem; font-weight: bold; color: #1f77b4; text-align: center; margin: 1rem 0; }
+.date-badge { background: #e8f4f8; padding: 0.5rem 1rem; border-radius: 0.5rem; display: inline-block; margin: 0.5rem 0; font-weight: bold; }
 .session-card { background: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; border-left: 4px solid #1f77b4; }
 .left-side { background-color: #8B4513; color: white; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
 .right-side { background-color: #2F4F4F; color: white; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
-.role-badge { display: inline-block; background: #e8f4f8; padding: 0.25rem 0.5rem; border-radius: 0.25rem; margin: 0.25rem; }
 </style>
 ''', unsafe_allow_html=True)
 
@@ -53,7 +53,6 @@ def load_coaching_rules():
         with open('coaching_rules.yaml') as f:
             return yaml.safe_load(f)
     except:
-        # Default rules if file not found
         return {
             'session_types': {
                 'Beginner': {'baseline_rules': [
@@ -105,45 +104,105 @@ def get_required_roles(session_type, baseline_coaches, private_lessons):
         if baseline_coaches >= 2:
             roles.append('Flowter')
     
-    # Add private lesson coaches
     for i in range(private_lessons):
         roles.append(f'Private {i+1}')
     
     return roles
 
-def save_to_google_sheets(gc, sheet_id, sessions, assignments):
-    """Save schedule and assignments to Google Sheets"""
+def load_from_google_sheets(gc, sheet_id):
+    """Load all schedules from Google Sheets"""
+    try:
+        sheet = gc.open_by_key(sheet_id).sheet1
+        data = sheet.get_all_values()
+        
+        if len(data) < 2:
+            return {}, {}
+        
+        sessions_by_date = defaultdict(list)
+        assignments = {}
+        
+        for row in data[1:]:  # Skip header
+            if len(row) >= 7:
+                try:
+                    time_str = row[0]
+                    session_datetime = datetime.strptime(f"{row[7]} {time_str}", "%Y-%m-%d %I:%M %p")
+                    
+                    session = {
+                        'time': session_datetime,
+                        'session_type': row[1],
+                        'side': row[2],
+                        'guests': int(row[3]),
+                        'private_lessons': int(row[4]),
+                        'baseline_coaches': 0,
+                        'roles': []
+                    }
+                    
+                    # Recalculate roles based on current rules
+                    baseline = calculate_baseline_coaches(
+                        session['session_type'],
+                        session['guests'],
+                        load_coaching_rules()
+                    )
+                    session['baseline_coaches'] = baseline
+                    session['roles'] = get_required_roles(
+                        session['session_type'],
+                        baseline,
+                        session['private_lessons']
+                    )
+                    
+                    session_date = session_datetime.date()
+                    sessions_by_date[session_date].append(session)
+                    
+                    # Load assignment
+                    if row[5] != 'N/A' and row[6] != 'No coaches needed':
+                        key = (session_datetime, row[2], row[5])
+                        assignments[key] = row[6]
+                
+                except Exception as e:
+                    continue
+        
+        return dict(sessions_by_date), assignments
+    
+    except Exception as e:
+        st.error(f"Error loading: {e}")
+        return {}, {}
+
+def save_to_google_sheets(gc, sheet_id, all_sessions, assignments):
+    """Save all schedules to Google Sheets"""
     try:
         sheet = gc.open_by_key(sheet_id).sheet1
         
-        # Build data rows
-        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private Lessons', 'Role', 'Assigned Coach']]
+        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private Lessons', 'Role', 'Assigned Coach', 'Date']]
         
-        for session in sessions:
-            roles = session.get('roles', [])
-            if roles:
-                for role in roles:
-                    key = (session['time'], session['side'], role)
-                    coach = assignments.get(key, 'Unassigned')
+        # Flatten all sessions across all dates
+        for session_date, sessions in sorted(all_sessions.items()):
+            for session in sessions:
+                roles = session.get('roles', [])
+                if roles:
+                    for role in roles:
+                        key = (session['time'], session['side'], role)
+                        coach = assignments.get(key, 'Unassigned')
+                        rows.append([
+                            session['time'].strftime('%I:%M %p'),
+                            session['session_type'],
+                            session['side'],
+                            session['guests'],
+                            session['private_lessons'],
+                            role,
+                            coach,
+                            session_date.strftime('%Y-%m-%d')
+                        ])
+                else:
                     rows.append([
                         session['time'].strftime('%I:%M %p'),
                         session['session_type'],
                         session['side'],
                         session['guests'],
                         session['private_lessons'],
-                        role,
-                        coach
+                        'N/A',
+                        'No coaches needed',
+                        session_date.strftime('%Y-%m-%d')
                     ])
-            else:
-                rows.append([
-                    session['time'].strftime('%I:%M %p'),
-                    session['session_type'],
-                    session['side'],
-                    session['guests'],
-                    session['private_lessons'],
-                    'N/A',
-                    'No coaches needed'
-                ])
         
         sheet.clear()
         sheet.update('A1', rows)
@@ -174,45 +233,99 @@ def get_google_sheets_client():
         return None
 
 # Initialize session state
-if 'sessions' not in st.session_state:
-    st.session_state.sessions = []
+if 'sessions_by_date' not in st.session_state:
+    st.session_state.sessions_by_date = {}  # Dict of {date: [sessions]}
 if 'assignments' not in st.session_state:
     st.session_state.assignments = {}
-if 'schedule_date' not in st.session_state:
-    st.session_state.schedule_date = date.today()
+if 'selected_date' not in st.session_state:
+    st.session_state.selected_date = date.today()
 if 'coach_roster' not in st.session_state:
     st.session_state.coach_roster = ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
+if 'last_sync' not in st.session_state:
+    st.session_state.last_sync = None
 
-# Load rules
 rules = load_coaching_rules()
 gc = get_google_sheets_client()
 
-# Get sheet ID
 try:
     SCHEDULE_SHEET_ID = st.secrets.get('daily_schedule_sheet_id', '')
 except:
     SCHEDULE_SHEET_ID = ''
 
 # Header
-st.markdown('<div class="main-header">🏄 Daily Schedule Builder</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🏄 Multi-Day Schedule Builder</div>', unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns([2, 1, 1])
+# Top controls - ALWAYS VISIBLE
+col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+
 with col1:
-    st.session_state.schedule_date = st.date_input(
-        "📅 Schedule Date",
-        value=st.session_state.schedule_date,
-        key='date_picker'
+    # Date picker that persists across tabs
+    new_date = st.date_input(
+        "📅 Working On",
+        value=st.session_state.selected_date,
+        key='main_date_picker',
+        help="Select the date you want to view/edit"
     )
+    if new_date != st.session_state.selected_date:
+        st.session_state.selected_date = new_date
+        st.rerun()
+
 with col2:
+    if gc and SCHEDULE_SHEET_ID:
+        if st.button("🔄 Load", use_container_width=True, help="Load schedules from Google Sheets"):
+            with st.spinner("Loading..."):
+                loaded_sessions, loaded_assignments = load_from_google_sheets(gc, SCHEDULE_SHEET_ID)
+                st.session_state.sessions_by_date = loaded_sessions
+                st.session_state.assignments = loaded_assignments
+                st.session_state.last_sync = datetime.now()
+                st.success("✅ Loaded!")
+                st.rerun()
+
+with col3:
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state["password_correct"] = False
         st.rerun()
-with col3:
-    if st.button("🗑️ Clear All", use_container_width=True):
-        st.session_state.sessions = []
-        st.session_state.assignments = {}
-        st.success("Cleared!")
-        st.rerun()
+
+with col4:
+    if st.button("🗑️ Clear Day", use_container_width=True, help="Clear sessions for selected date"):
+        if st.session_state.selected_date in st.session_state.sessions_by_date:
+            del st.session_state.sessions_by_date[st.session_state.selected_date]
+            # Clear assignments for this date
+            keys_to_remove = [k for k in st.session_state.assignments.keys() if k[0].date() == st.session_state.selected_date]
+            for key in keys_to_remove:
+                del st.session_state.assignments[key]
+            st.success("Cleared!")
+            st.rerun()
+
+# Show current date prominently
+st.markdown(f'<div class="date-badge">📅 {st.session_state.selected_date.strftime("%A, %B %d, %Y")}</div>', unsafe_allow_html=True)
+
+# Quick stats for current date
+current_sessions = st.session_state.sessions_by_date.get(st.session_state.selected_date, [])
+if current_sessions:
+    total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
+    assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
+    st.caption(f"📊 {len(current_sessions)} sessions | {assigned_roles}/{total_roles} roles assigned")
+
+# Week overview
+if st.session_state.sessions_by_date:
+    with st.expander("📅 Week Overview", expanded=False):
+        week_dates = sorted(st.session_state.sessions_by_date.keys())
+        cols = st.columns(min(len(week_dates), 7))
+        for idx, d in enumerate(week_dates[:7]):
+            with cols[idx]:
+                session_count = len(st.session_state.sessions_by_date[d])
+                is_selected = d == st.session_state.selected_date
+                style = "background:#1f77b4;color:white;" if is_selected else "background:#f0f2f6;"
+                st.markdown(f'''
+                <div style="{style}padding:0.5rem;border-radius:0.5rem;text-align:center;">
+                    <strong>{d.strftime("%a %m/%d")}</strong><br>
+                    {session_count} sessions
+                </div>
+                ''', unsafe_allow_html=True)
+                if st.button(f"View", key=f"goto_{d}", use_container_width=True):
+                    st.session_state.selected_date = d
+                    st.rerun()
 
 st.markdown('---')
 
@@ -220,29 +333,23 @@ st.markdown('---')
 tab1, tab2, tab3 = st.tabs(['➕ Create Sessions', '👥 Assign Coaches', '📋 View Schedule'])
 
 with tab1:
-    st.header('Create Sessions')
-    st.caption('Build your daily schedule by adding sessions')
+    st.header(f'Create Sessions for {st.session_state.selected_date.strftime("%A, %b %d")}')
+    st.caption('Add sessions to this date')
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader('Session Details')
-        
         session_time = st.time_input('Time', value=time(9, 0), key='session_time')
-        session_type = st.selectbox(
-            'Session Type',
-            list(rules['session_types'].keys()),
-            key='session_type'
-        )
+        session_type = st.selectbox('Session Type', list(rules['session_types'].keys()), key='session_type')
     
     with col2:
         st.subheader(' ')
-        st.write('')  # Spacing
+        st.write('')
         add_both = st.checkbox('Add both LEFT and RIGHT', value=True, key='add_both')
     
     st.markdown('---')
     
-    # LEFT and RIGHT columns
     col_left, col_right = st.columns(2)
     
     with col_left:
@@ -254,7 +361,7 @@ with tab1:
         left_roles = get_required_roles(session_type, left_baseline, left_private)
         
         if left_roles:
-            st.info(f"Roles needed: {', '.join(left_roles)}")
+            st.info(f"Roles: {', '.join(left_roles)}")
         else:
             st.info("No coaches needed")
     
@@ -267,17 +374,19 @@ with tab1:
         right_roles = get_required_roles(session_type, right_baseline, right_private)
         
         if right_roles:
-            st.info(f"Roles needed: {', '.join(right_roles)}")
+            st.info(f"Roles: {', '.join(right_roles)}")
         else:
             st.info("No coaches needed")
     
     st.markdown('---')
     
     if st.button('➕ Add Session(s)', type='primary', use_container_width=True):
-        session_datetime = datetime.combine(st.session_state.schedule_date, session_time)
+        session_datetime = datetime.combine(st.session_state.selected_date, session_time)
         
-        # Add LEFT session
-        st.session_state.sessions.append({
+        if st.session_state.selected_date not in st.session_state.sessions_by_date:
+            st.session_state.sessions_by_date[st.session_state.selected_date] = []
+        
+        st.session_state.sessions_by_date[st.session_state.selected_date].append({
             'time': session_datetime,
             'session_type': session_type,
             'side': 'LEFT',
@@ -287,9 +396,8 @@ with tab1:
             'roles': left_roles
         })
         
-        # Add RIGHT session if checked
         if add_both:
-            st.session_state.sessions.append({
+            st.session_state.sessions_by_date[st.session_state.selected_date].append({
                 'time': session_datetime,
                 'session_type': session_type,
                 'side': 'RIGHT',
@@ -299,17 +407,16 @@ with tab1:
                 'roles': right_roles
             })
         
-        st.success(f'Added session(s) at {session_time.strftime("%I:%M %p")}!')
+        st.success(f'Added to {st.session_state.selected_date.strftime("%b %d")}!')
         st.rerun()
     
-    # Show created sessions
-    if st.session_state.sessions:
+    # Show sessions for selected date
+    if current_sessions:
         st.markdown('---')
-        st.subheader('Created Sessions')
+        st.subheader('Sessions for This Day')
         
-        # Group by time
         sessions_by_time = defaultdict(list)
-        for i, session in enumerate(st.session_state.sessions):
+        for i, session in enumerate(current_sessions):
             sessions_by_time[session['time']].append((i, session))
         
         for time_key in sorted(sessions_by_time.keys()):
@@ -324,21 +431,22 @@ with tab1:
                         st.write(f"👥 {session['guests']} guests")
                         st.write(f"🎓 {session['private_lessons']} private")
                         if session['roles']:
-                            st.write(f"Roles: {', '.join(session['roles'])}")
+                            st.write(f"{', '.join(session['roles'])}")
                 
                 with cols[-1]:
-                    if st.button('🗑️ Delete', key=f'del_{time_key}'):
-                        # Remove sessions at this time
-                        st.session_state.sessions = [s for s in st.session_state.sessions if s['time'] != time_key]
+                    if st.button('🗑️', key=f'del_{time_key}_{st.session_state.selected_date}'):
+                        st.session_state.sessions_by_date[st.session_state.selected_date] = [
+                            s for s in st.session_state.sessions_by_date[st.session_state.selected_date]
+                            if s['time'] != time_key
+                        ]
                         st.rerun()
 
 with tab2:
-    st.header('Assign Coaches')
+    st.header(f'Assign Coaches for {st.session_state.selected_date.strftime("%A, %b %d")}')
     
-    if not st.session_state.sessions:
-        st.info('👈 Create sessions first in the "Create Sessions" tab')
+    if not current_sessions:
+        st.info(f'👈 No sessions for {st.session_state.selected_date.strftime("%b %d")}. Create some in the "Create Sessions" tab.')
     else:
-        # Coach roster management
         with st.expander('👥 Manage Coach Roster'):
             new_coach = st.text_input('Add coach name')
             col1, col2 = st.columns([1, 3])
@@ -349,16 +457,14 @@ with tab2:
                         st.success(f'Added {new_coach}')
                         st.rerun()
             with col2:
-                st.info(f"Current roster: {', '.join(st.session_state.coach_roster)}")
+                st.info(f"Roster: {', '.join(st.session_state.coach_roster)}")
         
         st.markdown('---')
         
-        # Group sessions by time
         sessions_by_time = defaultdict(list)
-        for session in st.session_state.sessions:
+        for session in current_sessions:
             sessions_by_time[session['time']].append(session)
         
-        # Display sessions for assignment
         for time_key in sorted(sessions_by_time.keys()):
             sessions = sessions_by_time[time_key]
             main = sessions[0]
@@ -388,7 +494,7 @@ with tab2:
                                 role,
                                 options,
                                 index=idx_default,
-                                key=f'assign_{time_key}_{session["side"]}_{role}'
+                                key=f'assign_{st.session_state.selected_date}_{time_key}_{session["side"]}_{role}'
                             )
                             
                             if new_assignment != '-- Unassigned --':
@@ -400,37 +506,32 @@ with tab2:
             
             st.markdown('---')
         
-        # Save button
         if gc and SCHEDULE_SHEET_ID:
-            if st.button('💾 Save to Google Sheets', type='primary'):
-                if save_to_google_sheets(gc, SCHEDULE_SHEET_ID, st.session_state.sessions, st.session_state.assignments):
-                    st.success('✅ Saved to Google Sheets!')
+            if st.button('💾 Save All to Google Sheets', type='primary'):
+                if save_to_google_sheets(gc, SCHEDULE_SHEET_ID, st.session_state.sessions_by_date, st.session_state.assignments):
+                    st.session_state.last_sync = datetime.now()
+                    st.success('✅ Saved all dates!')
         else:
-            st.warning('⚠️ Google Sheets not configured. Add daily_schedule_sheet_id to secrets.')
+            st.warning('⚠️ Google Sheets not configured')
 
 with tab3:
-    st.header('Schedule Overview')
+    st.header(f'Schedule for {st.session_state.selected_date.strftime("%A, %B %d, %Y")}')
     
-    if not st.session_state.sessions:
-        st.info('No sessions created yet')
+    if not current_sessions:
+        st.info('No sessions for this date')
     else:
-        st.subheader(f"📅 {st.session_state.schedule_date.strftime('%A, %B %d, %Y')}")
-        
-        # Summary stats
-        total_sessions = len(st.session_state.sessions)
-        total_roles = sum(len(s.get('roles', [])) for s in st.session_state.sessions)
-        assigned_roles = len(st.session_state.assignments)
+        total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
+        assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
         
         col1, col2, col3 = st.columns(3)
-        col1.metric('Total Sessions', total_sessions)
+        col1.metric('Sessions', len(current_sessions))
         col2.metric('Roles Needed', total_roles)
-        col3.metric('Roles Assigned', f'{assigned_roles}/{total_roles}')
+        col3.metric('Assigned', f'{assigned_roles}/{total_roles}')
         
         st.markdown('---')
         
-        # Build schedule view
         sessions_by_time = defaultdict(list)
-        for session in st.session_state.sessions:
+        for session in current_sessions:
             sessions_by_time[session['time']].append(session)
         
         for time_key in sorted(sessions_by_time.keys()):
@@ -453,17 +554,16 @@ with tab3:
                 
                 st.markdown(f'''
                 <div style="background:{bg_color};color:white;padding:1rem;border-radius:0.5rem;margin:0.5rem 0;">
-                    <strong>{session['side']}</strong> - {session['guests']} guests, {session['private_lessons']} private lessons<br>
+                    <strong>{session['side']}</strong> - {session['guests']} guests, {session['private_lessons']} private<br>
                     <div style="margin-top:0.5rem;">{roles_html}</div>
                 </div>
                 ''', unsafe_allow_html=True)
             
             st.markdown('---')
         
-        # Export button
-        if st.button('📥 Export to Excel'):
+        if st.button('📥 Export This Day to Excel'):
             export_data = []
-            for session in sorted(st.session_state.sessions, key=lambda x: x['time']):
+            for session in sorted(current_sessions, key=lambda x: x['time']):
                 if session['roles']:
                     for role in session['roles']:
                         key = (session['time'], session['side'], role)
@@ -497,9 +597,12 @@ with tab3:
             st.download_button(
                 '📥 Download Excel',
                 output,
-                file_name=f'schedule_{st.session_state.schedule_date.strftime("%Y%m%d")}.xlsx',
+                file_name=f'schedule_{st.session_state.selected_date.strftime("%Y%m%d")}.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
 
 st.markdown('---')
-st.caption('🏄 Daily Schedule Builder | Head Coach Edition | v3.0')
+if st.session_state.last_sync:
+    st.caption(f'🏄 Multi-Day Schedule Builder | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")} | v3.1')
+else:
+    st.caption('🏄 Multi-Day Schedule Builder | v3.1')
