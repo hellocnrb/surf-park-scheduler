@@ -340,14 +340,15 @@ if st.session_state.sessions_by_date:
             with cols[idx]:
                 session_count = len(st.session_state.sessions_by_date[d])
                 is_selected = d == st.session_state.selected_date
-                style = "background:#1f77b4;color:white;" if is_selected else "background:#5a6c7d;color:white;"
+                style = "background:#1f77b4;color:white;" if is_selected else "background:#f0f2f6;color:#333;"
                 st.markdown(f'''
-                <div style="{style}padding:0.5rem;border-radius:0.5rem;text-align:center;">
+                <div style="{style}padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
                     <strong>{d.strftime("%a %m/%d")}</strong><br>
                     {session_count} sessions
                 </div>
                 ''', unsafe_allow_html=True)
-                if st.button(f"View", key=f"goto_{d}", use_container_width=True):
+                button_label = "📍 Viewing" if is_selected else "👁️ View"
+                if st.button(button_label, key=f"goto_{d.strftime('%Y%m%d')}", use_container_width=True, disabled=is_selected):
                     st.session_state.selected_date = d
                     st.rerun()
 
