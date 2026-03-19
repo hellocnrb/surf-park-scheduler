@@ -120,41 +120,48 @@ def load_from_google_sheets(gc, sheet_id):
         
         sessions_by_date = defaultdict(list)
         assignments = {}
+        seen_sessions = set()  # Track unique sessions to avoid duplicates
         
         for row in data[1:]:  # Skip header
             if len(row) >= 7:
                 try:
                     time_str = row[0]
                     session_datetime = datetime.strptime(f"{row[7]} {time_str}", "%Y-%m-%d %I:%M %p")
-                    
-                    session = {
-                        'time': session_datetime,
-                        'session_type': row[1],
-                        'side': row[2],
-                        'guests': int(row[3]),
-                        'private_lessons': int(row[4]),
-                        'baseline_coaches': 0,
-                        'roles': []
-                    }
-                    
-                    # Recalculate roles based on current rules
-                    baseline = calculate_baseline_coaches(
-                        session['session_type'],
-                        session['guests'],
-                        load_coaching_rules()
-                    )
-                    session['baseline_coaches'] = baseline
-                    session['roles'] = get_required_roles(
-                        session['session_type'],
-                        baseline,
-                        session['private_lessons']
-                    )
-                    
                     session_date = session_datetime.date()
-                    sessions_by_date[session_date].append(session)
                     
-                    # Load assignment
-                    if row[5] != 'N/A' and row[6] != 'No coaches needed':
+                    # Create unique identifier for this session
+                    session_key = (session_datetime, row[2], row[1], int(row[3]), int(row[4]))  # time, side, type, guests, private
+                    
+                    # Only create session if we haven't seen this exact session before
+                    if session_key not in seen_sessions:
+                        session = {
+                            'time': session_datetime,
+                            'session_type': row[1],
+                            'side': row[2],
+                            'guests': int(row[3]),
+                            'private_lessons': int(row[4]),
+                            'baseline_coaches': 0,
+                            'roles': []
+                        }
+                        
+                        # Recalculate roles based on current rules
+                        baseline = calculate_baseline_coaches(
+                            session['session_type'],
+                            session['guests'],
+                            load_coaching_rules()
+                        )
+                        session['baseline_coaches'] = baseline
+                        session['roles'] = get_required_roles(
+                            session['session_type'],
+                            baseline,
+                            session['private_lessons']
+                        )
+                        
+                        sessions_by_date[session_date].append(session)
+                        seen_sessions.add(session_key)
+                    
+                    # Load assignment (this happens for each role row)
+                    if row[5] != 'N/A' and row[6] != 'No coaches needed' and row[6] != 'Unassigned':
                         key = (session_datetime, row[2], row[5])
                         assignments[key] = row[6]
                 
