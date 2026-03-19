@@ -483,7 +483,7 @@ with tab2:
                     ''', unsafe_allow_html=True)
                     
                     if session['roles']:
-                        for role in session['roles']:
+                        for role_idx, role in enumerate(session['roles']):
                             key = (session['time'], session['side'], role)
                             assigned = st.session_state.assignments.get(key, '')
                             
@@ -494,7 +494,7 @@ with tab2:
                                 role,
                                 options,
                                 index=idx_default,
-                                key=f'assign_{st.session_state.selected_date}_{time_key}_{session["side"]}_{role}'
+                                key=f'assign_{st.session_state.selected_date}_{time_key.strftime("%H%M")}_{idx}_{role_idx}'
                             )
                             
                             if new_assignment != '-- Unassigned --':
@@ -540,24 +540,27 @@ with tab3:
             
             st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']}")
             
-            for session in sessions:
-                bg_color = '#8B4513' if session['side'] == 'LEFT' else '#2F4F4F'
-                
-                roles_html = ''
-                if session['roles']:
-                    for role in session['roles']:
-                        key = (session['time'], session['side'], role)
-                        coach = st.session_state.assignments.get(key, 'UNASSIGNED')
-                        roles_html += f'<div style="margin:0.25rem 0;"><strong>{role}:</strong> {coach}</div>'
-                else:
-                    roles_html = '<em>No coaches needed</em>'
-                
-                st.markdown(f'''
-                <div style="background:{bg_color};color:white;padding:1rem;border-radius:0.5rem;margin:0.5rem 0;">
-                    <strong>{session['side']}</strong> - {session['guests']} guests, {session['private_lessons']} private<br>
-                    <div style="margin-top:0.5rem;">{roles_html}</div>
-                </div>
-                ''', unsafe_allow_html=True)
+            # Display LEFT and RIGHT side by side
+            cols = st.columns(len(sessions))
+            for idx, session in enumerate(sessions):
+                with cols[idx]:
+                    bg_color = '#8B4513' if session['side'] == 'LEFT' else '#2F4F4F'
+                    
+                    roles_html = ''
+                    if session['roles']:
+                        for role in session['roles']:
+                            key = (session['time'], session['side'], role)
+                            coach = st.session_state.assignments.get(key, 'UNASSIGNED')
+                            roles_html += f'<div style="margin:0.25rem 0;"><strong>{role}:</strong> {coach}</div>'
+                    else:
+                        roles_html = '<em>No coaches needed</em>'
+                    
+                    st.markdown(f'''
+                    <div style="background:{bg_color};color:white;padding:1rem;border-radius:0.5rem;margin:0.5rem 0;">
+                        <strong>{session['side']}</strong> - {session['guests']} guests, {session['private_lessons']} private<br>
+                        <div style="margin-top:0.5rem;">{roles_html}</div>
+                    </div>
+                    ''', unsafe_allow_html=True)
             
             st.markdown('---')
         
