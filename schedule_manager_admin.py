@@ -283,17 +283,17 @@ col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
 with col1:
     # Date picker that persists across tabs
-    # Use on_change callback to ensure synchronization
-    def on_date_change():
-        st.session_state.selected_date = st.session_state.main_date_picker
-    
     st.date_input(
         "📅 Working On",
         value=st.session_state.selected_date,
         key='main_date_picker',
-        on_change=on_date_change,
         help="Select the date you want to view/edit"
     )
+    # Sync the widget value to selected_date
+    if 'main_date_picker' in st.session_state:
+        if st.session_state.main_date_picker != st.session_state.selected_date:
+            st.session_state.selected_date = st.session_state.main_date_picker
+            st.rerun()
 
 with col2:
     if gc and SCHEDULE_SHEET_ID:
@@ -352,7 +352,6 @@ if st.session_state.sessions_by_date:
                 button_label = "📍 Viewing" if is_selected else "👁️ View"
                 if st.button(button_label, key=f"goto_{d.strftime('%Y%m%d')}", use_container_width=True, disabled=is_selected):
                     st.session_state.selected_date = d
-                    st.session_state.main_date_picker = d  # Also update the date picker widget
                     st.rerun()
 
 st.markdown('---')
