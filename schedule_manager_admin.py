@@ -116,13 +116,19 @@ def load_from_google_sheets(gc, sheet_id):
         data = sheet.get_all_values()
         
         if len(data) < 2:
-            return {}, {}
+            return {}, {}, []
         
         sessions_by_date = defaultdict(list)
         assignments = {}
         seen_sessions = set()  # Track unique sessions to avoid duplicates
+        coach_roster = []
         
         for row in data[1:]:  # Skip header
+            # Check if this is the roster row
+            if len(row) >= 9 and row[0] == 'ROSTER' and row[8]:
+                coach_roster = [c.strip() for c in row[8].split(',') if c.strip()]
+                continue
+            
             if len(row) >= 7:
                 try:
                     time_str = row[0]
@@ -168,18 +174,26 @@ def load_from_google_sheets(gc, sheet_id):
                 except Exception as e:
                     continue
         
-        return dict(sessions_by_date), assignments
+        # If no roster was loaded, use default
+        if not coach_roster:
+            coach_roster = ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
+        
+        return dict(sessions_by_date), assignments, coach_roster
     
     except Exception as e:
         st.error(f"Error loading: {e}")
-        return {}, {}
+        return {}, {}, []
 
-def save_to_google_sheets(gc, sheet_id, all_sessions, assignments):
-    """Save all schedules to Google Sheets"""
+def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster):
+    """Save all schedules and coach roster to Google Sheets"""
     try:
         sheet = gc.open_by_key(sheet_id).sheet1
         
-        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private Lessons', 'Role', 'Assigned Coach', 'Date']]
+        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private Lessons', 'Role', 'Assigned Coach', 'Date', 'CoachRoster']]
+        
+        # First row: Save coach roster as comma-separated string
+        if coach_roster:
+            rows.append(['ROSTER', '', '', '', '', '', '', '', ','.join(coach_roster)])
         
         # Flatten all sessions across all dates
         for session_date, sessions in sorted(all_sessions.items()):
@@ -197,7 +211,8 @@ def save_to_google_sheets(gc, sheet_id, all_sessions, assignments):
                             session['private_lessons'],
                             role,
                             coach,
-                            session_date.strftime('%Y-%m-%d')
+                            session_date.strftime('%Y-%m-%d'),
+                            ''
                         ])
                 else:
                     rows.append([
@@ -208,7 +223,8 @@ def save_to_google_sheets(gc, sheet_id, all_sessions, assignments):
                         session['private_lessons'],
                         'N/A',
                         'No coaches needed',
-                        session_date.strftime('%Y-%m-%d')
+                        session_date.strftime('%Y-%m-%d'),
+                        ''
                     ])
         
         sheet.clear()
@@ -281,9 +297,10 @@ with col2:
     if gc and SCHEDULE_SHEET_ID:
         if st.button("🔄 Load", use_container_width=True, help="Load schedules from Google Sheets"):
             with st.spinner("Loading..."):
-                loaded_sessions, loaded_assignments = load_from_google_sheets(gc, SCHEDULE_SHEET_ID)
+                loaded_sessions, loaded_assignments, loaded_roster = load_from_google_sheets(gc, SCHEDULE_SHEET_ID)
                 st.session_state.sessions_by_date = loaded_sessions
                 st.session_state.assignments = loaded_assignments
+                st.session_state.coach_roster = loaded_roster
                 st.session_state.last_sync = datetime.now()
                 st.success("✅ Loaded!")
                 st.rerun()
@@ -515,7 +532,7 @@ with tab2:
         
         if gc and SCHEDULE_SHEET_ID:
             if st.button('💾 Save All to Google Sheets', type='primary'):
-                if save_to_google_sheets(gc, SCHEDULE_SHEET_ID, st.session_state.sessions_by_date, st.session_state.assignments):
+                if save_to_google_sheets(gc, SCHEDULE_SHEET_ID, st.session_state.sessions_by_date, st.session_state.assignments, st.session_state.coach_roster):
                     st.session_state.last_sync = datetime.now()
                     st.success('✅ Saved all dates!')
         else:
