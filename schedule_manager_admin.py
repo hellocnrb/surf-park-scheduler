@@ -266,6 +266,8 @@ if 'coach_roster' not in st.session_state:
     st.session_state.coach_roster = ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
 if 'last_sync' not in st.session_state:
     st.session_state.last_sync = None
+if 'force_date_change' not in st.session_state:
+    st.session_state.force_date_change = None
 
 rules = load_coaching_rules()
 gc = get_google_sheets_client()
@@ -274,6 +276,12 @@ try:
     SCHEDULE_SHEET_ID = st.secrets.get('daily_schedule_sheet_id', '')
 except:
     SCHEDULE_SHEET_ID = ''
+
+# Check if we need to force a date change (from View button)
+if st.session_state.force_date_change is not None:
+    st.session_state.selected_date = st.session_state.force_date_change
+    st.session_state.force_date_change = None
+    st.rerun()
 
 # Header
 st.markdown('<div class="main-header">🏄 Multi-Day Schedule Builder</div>', unsafe_allow_html=True)
@@ -351,8 +359,7 @@ if st.session_state.sessions_by_date:
                 ''', unsafe_allow_html=True)
                 button_label = "📍 Viewing" if is_selected else "👁️ View"
                 if st.button(button_label, key=f"goto_{d.strftime('%Y%m%d')}", use_container_width=True, disabled=is_selected):
-                    st.session_state.selected_date = d
-                    st.rerun()
+                    st.session_state.force_date_change = d
 
 st.markdown('---')
 
