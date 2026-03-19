@@ -340,7 +340,7 @@ if st.session_state.sessions_by_date:
             with cols[idx]:
                 session_count = len(st.session_state.sessions_by_date[d])
                 is_selected = d == st.session_state.selected_date
-                style = "background:#1f77b4;color:white;" if is_selected else "background:#f0f2f6;"
+                style = "background:#1f77b4;color:white;" if is_selected else "background:#5a6c7d;color:white;"
                 st.markdown(f'''
                 <div style="{style}padding:0.5rem;border-radius:0.5rem;text-align:center;">
                     <strong>{d.strftime("%a %m/%d")}</strong><br>
