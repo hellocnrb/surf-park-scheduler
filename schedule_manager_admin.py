@@ -110,24 +110,55 @@ def get_required_roles(session_type, baseline_coaches, private_lessons):
     return roles
 
 def load_from_google_sheets(gc, sheet_id):
-    """Load all schedules from Google Sheets"""
+    """Load all schedules, rosters, and rental info from Google Sheets"""
     try:
         sheet = gc.open_by_key(sheet_id).sheet1
         data = sheet.get_all_values()
         
         if len(data) < 2:
-            return {}, {}, []
+            return {}, {}, [], [], {}, {}
         
         sessions_by_date = defaultdict(list)
         assignments = {}
-        seen_sessions = set()  # Track unique sessions to avoid duplicates
+        seen_sessions = set()
         coach_roster = []
+        rental_roster = []
+        rental_assignments = {}
+        opening_closing_times = {}
         
         for row in data[1:]:  # Skip header
-            # Check if this is the roster row
-            if len(row) >= 9 and row[0] == 'ROSTER' and row[8]:
+            # Check for coach roster row
+            if len(row) >= 9 and row[0] == 'COACH_ROSTER' and row[8]:
                 coach_roster = [c.strip() for c in row[8].split(',') if c.strip()]
                 continue
+            
+            # Check for rental roster row
+            if len(row) >= 10 and row[0] == 'RENTAL_ROSTER' and row[9]:
+                rental_roster = [c.strip() for c in row[9].split(',') if c.strip()]
+                continue
+            
+            # Check for opening/closing rental assignments
+            if len(row) >= 11 and row[0] in ['OPENING', 'CLOSING']:
+                try:
+                    date_obj = datetime.strptime(row[7], "%Y-%m-%d").date()
+                    rental_assignments[(date_obj, row[0])] = row[10]
+                    if date_obj not in opening_closing_times:
+                        opening_closing_times[date_obj] = {}
+                    # Store default times - actual times are in the UI
+                    continue
+                except:
+                    continue
+            
+            # Check for session rental assignments
+            if len(row) >= 11 and row[1] == 'RENTAL' and row[10]:
+                try:
+                    time_str = row[0]
+                    date_str = row[7]
+                    session_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %I:%M %p")
+                    rental_assignments[(session_datetime, 'SESSION')] = row[10]
+                    continue
+                except:
+                    continue
             
             if len(row) >= 7:
                 try:
@@ -136,7 +167,7 @@ def load_from_google_sheets(gc, sheet_id):
                     session_date = session_datetime.date()
                     
                     # Create unique identifier for this session
-                    session_key = (session_datetime, row[2], row[1], int(row[3]), int(row[4]))  # time, side, type, guests, private
+                    session_key = (session_datetime, row[2], row[1], int(row[3]), int(row[4]))
                     
                     # Only create session if we haven't seen this exact session before
                     if session_key not in seen_sessions:
@@ -174,26 +205,46 @@ def load_from_google_sheets(gc, sheet_id):
                 except Exception as e:
                     continue
         
-        # If no roster was loaded, use default
+        # If no rosters loaded, use defaults
         if not coach_roster:
             coach_roster = ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
+        if not rental_roster:
+            rental_roster = ['Ella', 'Sarah', 'Mike', 'Alex']
         
-        return dict(sessions_by_date), assignments, coach_roster
+        return dict(sessions_by_date), assignments, coach_roster, rental_roster, rental_assignments, opening_closing_times
     
     except Exception as e:
         st.error(f"Error loading: {e}")
-        return {}, {}, []
+        return {}, {}, [], [], {}, {}
 
-def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster):
-    """Save all schedules and coach roster to Google Sheets"""
+def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster, rental_roster, rental_assignments, opening_closing_times):
+    """Save all schedules, rosters, and rental info to Google Sheets"""
     try:
         sheet = gc.open_by_key(sheet_id).sheet1
         
-        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private Lessons', 'Role', 'Assigned Coach', 'Date', 'CoachRoster']]
+        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private', 'Role', 'Coach', 'Date', 'CoachRoster', 'RentalRoster', 'RentalPerson']]
         
-        # First row: Save coach roster as comma-separated string
+        # Row 2: Save coach roster
         if coach_roster:
-            rows.append(['ROSTER', '', '', '', '', '', '', '', ','.join(coach_roster)])
+            rows.append(['COACH_ROSTER', '', '', '', '', '', '', '', ','.join(coach_roster), '', ''])
+        
+        # Row 3: Save rental roster
+        if rental_roster:
+            rows.append(['RENTAL_ROSTER', '', '', '', '', '', '', '', '', ','.join(rental_roster), ''])
+        
+        # Save rental assignments (Opening/Closing and sessions)
+        for (key, rental_type), person in rental_assignments.items():
+            if rental_type == 'OPENING':
+                date_key = key
+                time_str = opening_closing_times.get(date_key, {}).get('opening', time(8, 0)).strftime('%I:%M %p')
+                rows.append(['OPENING', '', '', '', '', '', '', date_key.strftime('%Y-%m-%d'), '', '', person])
+            elif rental_type == 'CLOSING':
+                date_key = key
+                time_str = opening_closing_times.get(date_key, {}).get('closing', time(18, 0)).strftime('%I:%M %p')
+                rows.append(['CLOSING', '', '', '', '', '', '', date_key.strftime('%Y-%m-%d'), '', '', person])
+            elif rental_type == 'SESSION':
+                time_dt = key
+                rows.append([time_dt.strftime('%I:%M %p'), 'RENTAL', '', '', '', '', '', time_dt.date().strftime('%Y-%m-%d'), '', '', person])
         
         # Flatten all sessions across all dates
         for session_date, sessions in sorted(all_sessions.items()):
@@ -212,7 +263,7 @@ def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster)
                             role,
                             coach,
                             session_date.strftime('%Y-%m-%d'),
-                            ''
+                            '', '', ''
                         ])
                 else:
                     rows.append([
@@ -224,7 +275,7 @@ def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster)
                         'N/A',
                         'No coaches needed',
                         session_date.strftime('%Y-%m-%d'),
-                        ''
+                        '', '', ''
                     ])
         
         sheet.clear()
@@ -264,10 +315,16 @@ if 'selected_date' not in st.session_state:
     st.session_state.selected_date = date.today()
 if 'coach_roster' not in st.session_state:
     st.session_state.coach_roster = ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
+if 'rental_roster' not in st.session_state:
+    st.session_state.rental_roster = ['Ella', 'Sarah', 'Mike', 'Alex']
 if 'last_sync' not in st.session_state:
     st.session_state.last_sync = None
 if 'force_date_change' not in st.session_state:
     st.session_state.force_date_change = None
+if 'rental_assignments' not in st.session_state:
+    st.session_state.rental_assignments = {}  # {(datetime, 'Opening'|'Closing'|session_key): person}
+if 'opening_closing_times' not in st.session_state:
+    st.session_state.opening_closing_times = {}  # {date: {'opening': time, 'closing': time}}
 
 rules = load_coaching_rules()
 gc = get_google_sheets_client()
@@ -307,10 +364,13 @@ with col2:
     if gc and SCHEDULE_SHEET_ID:
         if st.button("🔄 Load", use_container_width=True, help="Load schedules from Google Sheets"):
             with st.spinner("Loading..."):
-                loaded_sessions, loaded_assignments, loaded_roster = load_from_google_sheets(gc, SCHEDULE_SHEET_ID)
+                loaded_sessions, loaded_assignments, loaded_coach_roster, loaded_rental_roster, loaded_rental_assignments, loaded_oc_times = load_from_google_sheets(gc, SCHEDULE_SHEET_ID)
                 st.session_state.sessions_by_date = loaded_sessions
                 st.session_state.assignments = loaded_assignments
-                st.session_state.coach_roster = loaded_roster
+                st.session_state.coach_roster = loaded_coach_roster
+                st.session_state.rental_roster = loaded_rental_roster
+                st.session_state.rental_assignments = loaded_rental_assignments
+                st.session_state.opening_closing_times = loaded_oc_times
                 st.session_state.last_sync = datetime.now()
                 st.success("✅ Loaded!")
                 st.rerun()
@@ -386,6 +446,82 @@ tab1, tab2, tab3 = st.tabs(['➕ Create Sessions', '👥 Assign Coaches', '📋 
 with tab1:
     st.header(f'Create Sessions for {st.session_state.selected_date.strftime("%A, %b %d")}')
     st.caption('Add sessions to this date')
+    
+    # Opening/Closing Rental Blocks
+    with st.expander("🏪 Opening & Closing (Rental Counter)", expanded=True):
+        st.markdown("**Set times for rental counter opening/closing**")
+        col_open, col_close = st.columns(2)
+        
+        with col_open:
+            st.markdown("**🔓 Opening**")
+            opening_time = st.time_input(
+                'Opening Time',
+                value=time(8, 0),
+                key='opening_time_input'
+            )
+            opening_person_key = (st.session_state.selected_date, 'OPENING')
+            opening_assigned = st.session_state.rental_assignments.get(opening_person_key, '')
+            
+            opening_options = ['-- Unassigned --'] + st.session_state.rental_roster
+            opening_idx = opening_options.index(opening_assigned) if opening_assigned in st.session_state.rental_roster else 0
+            
+            new_opening = st.selectbox(
+                'Opening Staff',
+                opening_options,
+                index=opening_idx,
+                key=f'opening_staff_{st.session_state.selected_date}'
+            )
+            
+            if new_opening != '-- Unassigned --':
+                st.session_state.rental_assignments[opening_person_key] = new_opening
+                if st.session_state.selected_date not in st.session_state.opening_closing_times:
+                    st.session_state.opening_closing_times[st.session_state.selected_date] = {}
+                st.session_state.opening_closing_times[st.session_state.selected_date]['opening'] = opening_time
+            elif opening_person_key in st.session_state.rental_assignments:
+                del st.session_state.rental_assignments[opening_person_key]
+        
+        with col_close:
+            st.markdown("**🔒 Closing**")
+            closing_time = st.time_input(
+                'Closing Time',
+                value=time(18, 0),
+                key='closing_time_input'
+            )
+            closing_person_key = (st.session_state.selected_date, 'CLOSING')
+            closing_assigned = st.session_state.rental_assignments.get(closing_person_key, '')
+            
+            closing_options = ['-- Unassigned --'] + st.session_state.rental_roster
+            closing_idx = closing_options.index(closing_assigned) if closing_assigned in st.session_state.rental_roster else 0
+            
+            new_closing = st.selectbox(
+                'Closing Staff',
+                closing_options,
+                index=closing_idx,
+                key=f'closing_staff_{st.session_state.selected_date}'
+            )
+            
+            if new_closing != '-- Unassigned --':
+                st.session_state.rental_assignments[closing_person_key] = new_closing
+                if st.session_state.selected_date not in st.session_state.opening_closing_times:
+                    st.session_state.opening_closing_times[st.session_state.selected_date] = {}
+                st.session_state.opening_closing_times[st.session_state.selected_date]['closing'] = closing_time
+            elif closing_person_key in st.session_state.rental_assignments:
+                del st.session_state.rental_assignments[closing_person_key]
+        
+        # Manage rental staff roster
+        with st.expander("👥 Manage Rental Staff Roster"):
+            new_rental_staff = st.text_input('Add rental staff name', key='new_rental_staff')
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button('➕ Add Rental Staff') and new_rental_staff:
+                    if new_rental_staff not in st.session_state.rental_roster:
+                        st.session_state.rental_roster.append(new_rental_staff)
+                        st.success(f'Added {new_rental_staff}')
+                        st.rerun()
+            with col2:
+                st.info(f"Rental Staff: {', '.join(st.session_state.rental_roster)}")
+    
+    st.markdown('---')
     
     col1, col2 = st.columns(2)
     
@@ -522,6 +658,28 @@ with tab2:
             
             st.markdown(f"### 🕐 {time_key.strftime('%I:%M %p')} - {main['session_type']}")
             
+            # Rental assignment for this time slot
+            rental_key = (time_key, 'SESSION')
+            rental_assigned = st.session_state.rental_assignments.get(rental_key, '')
+            rental_options = ['-- Unassigned --'] + st.session_state.rental_roster
+            rental_idx = rental_options.index(rental_assigned) if rental_assigned in st.session_state.rental_roster else 0
+            
+            st.markdown("**🏪 Rentals During This Session:**")
+            new_rental = st.selectbox(
+                'Rental Counter Staff',
+                rental_options,
+                index=rental_idx,
+                key=f'rental_{st.session_state.selected_date}_{time_key.strftime("%H%M")}',
+                help="Who is managing rentals during this session?"
+            )
+            
+            if new_rental != '-- Unassigned --':
+                st.session_state.rental_assignments[rental_key] = new_rental
+            elif rental_key in st.session_state.rental_assignments:
+                del st.session_state.rental_assignments[rental_key]
+            
+            st.markdown('---')
+            
             cols = st.columns(len(sessions))
             for idx, session in enumerate(sessions):
                 with cols[idx]:
@@ -559,7 +717,16 @@ with tab2:
         
         if gc and SCHEDULE_SHEET_ID:
             if st.button('💾 Save All to Google Sheets', type='primary'):
-                if save_to_google_sheets(gc, SCHEDULE_SHEET_ID, st.session_state.sessions_by_date, st.session_state.assignments, st.session_state.coach_roster):
+                if save_to_google_sheets(
+                    gc, 
+                    SCHEDULE_SHEET_ID, 
+                    st.session_state.sessions_by_date, 
+                    st.session_state.assignments, 
+                    st.session_state.coach_roster,
+                    st.session_state.rental_roster,
+                    st.session_state.rental_assignments,
+                    st.session_state.opening_closing_times
+                ):
                     st.session_state.last_sync = datetime.now()
                     st.success('✅ Saved all dates!')
         else:
@@ -571,6 +738,32 @@ with tab3:
     if not current_sessions:
         st.info('No sessions for this date')
     else:
+        # Show Opening/Closing
+        if st.session_state.selected_date in st.session_state.opening_closing_times:
+            times = st.session_state.opening_closing_times[st.session_state.selected_date]
+            opening_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'OPENING'), 'UNASSIGNED')
+            closing_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'CLOSING'), 'UNASSIGNED')
+            
+            col_o, col_c = st.columns(2)
+            with col_o:
+                opening_time_str = times.get('opening', time(8, 0)).strftime('%I:%M %p') if 'opening' in times else '8:00 AM'
+                st.markdown(f'''
+                <div style="background:#2e7d32;color:white;padding:0.75rem;border-radius:0.5rem;margin-bottom:1rem;">
+                    <strong>🔓 OPENING</strong> - {opening_time_str}<br>
+                    Rentals: {opening_person}
+                </div>
+                ''', unsafe_allow_html=True)
+            with col_c:
+                closing_time_str = times.get('closing', time(18, 0)).strftime('%I:%M %p') if 'closing' in times else '6:00 PM'
+                st.markdown(f'''
+                <div style="background:#c62828;color:white;padding:0.75rem;border-radius:0.5rem;margin-bottom:1rem;">
+                    <strong>🔒 CLOSING</strong> - {closing_time_str}<br>
+                    Rentals: {closing_person}
+                </div>
+                ''', unsafe_allow_html=True)
+        
+        st.markdown('---')
+        
         total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
         assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
         
@@ -589,7 +782,11 @@ with tab3:
             sessions = sessions_by_time[time_key]
             main = sessions[0]
             
-            st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']}")
+            # Get rental assignment for this session
+            rental_key = (time_key, 'SESSION')
+            rental_person = st.session_state.rental_assignments.get(rental_key, 'UNASSIGNED')
+            
+            st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']} <span style='float:right;color:#666;font-size:0.9rem;'>🏪 Rentals: {rental_person}</span>", unsafe_allow_html=True)
             
             # Display LEFT and RIGHT side by side
             cols = st.columns(len(sessions))
