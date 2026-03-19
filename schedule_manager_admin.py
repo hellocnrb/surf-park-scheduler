@@ -345,21 +345,38 @@ if current_sessions:
 if st.session_state.sessions_by_date:
     with st.expander("📅 Week Overview", expanded=False):
         week_dates = sorted(st.session_state.sessions_by_date.keys())
+        
+        # Create buttons in a more reliable way
         cols = st.columns(min(len(week_dates), 7))
-        for idx, d in enumerate(week_dates[:7]):
-            with cols[idx]:
-                session_count = len(st.session_state.sessions_by_date[d])
-                is_selected = d == st.session_state.selected_date
+        
+        for col_idx, target_date in enumerate(week_dates[:7]):
+            with cols[col_idx]:
+                session_count = len(st.session_state.sessions_by_date[target_date])
+                is_selected = target_date == st.session_state.selected_date
                 style = "background:#1f77b4;color:white;" if is_selected else "background:#f0f2f6;color:#333;"
+                
                 st.markdown(f'''
                 <div style="{style}padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
-                    <strong>{d.strftime("%a %m/%d")}</strong><br>
+                    <strong>{target_date.strftime("%a %m/%d")}</strong><br>
                     {session_count} sessions
                 </div>
                 ''', unsafe_allow_html=True)
+                
                 button_label = "📍 Viewing" if is_selected else "👁️ View"
-                if st.button(button_label, key=f"goto_{d.strftime('%Y%m%d')}", use_container_width=True, disabled=is_selected):
-                    st.session_state.force_date_change = d
+                
+                # Use callback to ensure correct date is captured
+                def make_callback(d):
+                    def callback():
+                        st.session_state.force_date_change = d
+                    return callback
+                
+                st.button(
+                    button_label,
+                    key=f"view_btn_{target_date.isoformat()}",
+                    use_container_width=True,
+                    disabled=is_selected,
+                    on_click=make_callback(target_date)
+                )
 
 st.markdown('---')
 
