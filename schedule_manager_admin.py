@@ -138,13 +138,19 @@ def load_from_google_sheets(gc, sheet_id):
                 continue
             
             # Check for opening/closing rental assignments
-            if len(row) >= 11 and row[0] in ['OPENING', 'CLOSING']:
+            if len(row) >= 12 and row[0] in ['OPENING', 'CLOSING']:
                 try:
                     date_obj = datetime.strptime(row[7], "%Y-%m-%d").date()
                     rental_assignments[(date_obj, row[0])] = row[10]
                     if date_obj not in opening_closing_times:
                         opening_closing_times[date_obj] = {}
-                    # Store default times - actual times are in the UI
+                    # Load the actual time from column 11 (OpenCloseTime)
+                    if row[11]:
+                        time_obj = datetime.strptime(row[11], "%I:%M %p").time()
+                        if row[0] == 'OPENING':
+                            opening_closing_times[date_obj]['opening'] = time_obj
+                        else:  # CLOSING
+                            opening_closing_times[date_obj]['closing'] = time_obj
                     continue
                 except:
                     continue
@@ -222,29 +228,31 @@ def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster,
     try:
         sheet = gc.open_by_key(sheet_id).sheet1
         
-        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private', 'Role', 'Coach', 'Date', 'CoachRoster', 'RentalRoster', 'RentalPerson']]
+        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private', 'Role', 'Coach', 'Date', 'CoachRoster', 'RentalRoster', 'RentalPerson', 'OpenCloseTime']]
         
         # Row 2: Save coach roster
         if coach_roster:
-            rows.append(['COACH_ROSTER', '', '', '', '', '', '', '', ','.join(coach_roster), '', ''])
+            rows.append(['COACH_ROSTER', '', '', '', '', '', '', '', ','.join(coach_roster), '', '', ''])
         
         # Row 3: Save rental roster
         if rental_roster:
-            rows.append(['RENTAL_ROSTER', '', '', '', '', '', '', '', '', ','.join(rental_roster), ''])
+            rows.append(['RENTAL_ROSTER', '', '', '', '', '', '', '', '', ','.join(rental_roster), '', ''])
         
         # Save rental assignments (Opening/Closing and sessions)
         for (key, rental_type), person in rental_assignments.items():
             if rental_type == 'OPENING':
                 date_key = key
-                time_str = opening_closing_times.get(date_key, {}).get('opening', time(8, 0)).strftime('%I:%M %p')
-                rows.append(['OPENING', '', '', '', '', '', '', date_key.strftime('%Y-%m-%d'), '', '', person])
+                time_obj = opening_closing_times.get(date_key, {}).get('opening', time(8, 0))
+                time_str = time_obj.strftime('%I:%M %p')
+                rows.append(['OPENING', '', '', '', '', '', '', date_key.strftime('%Y-%m-%d'), '', '', person, time_str])
             elif rental_type == 'CLOSING':
                 date_key = key
-                time_str = opening_closing_times.get(date_key, {}).get('closing', time(18, 0)).strftime('%I:%M %p')
-                rows.append(['CLOSING', '', '', '', '', '', '', date_key.strftime('%Y-%m-%d'), '', '', person])
+                time_obj = opening_closing_times.get(date_key, {}).get('closing', time(18, 0))
+                time_str = time_obj.strftime('%I:%M %p')
+                rows.append(['CLOSING', '', '', '', '', '', '', date_key.strftime('%Y-%m-%d'), '', '', person, time_str])
             elif rental_type == 'SESSION':
                 time_dt = key
-                rows.append([time_dt.strftime('%I:%M %p'), 'RENTAL', '', '', '', '', '', time_dt.date().strftime('%Y-%m-%d'), '', '', person])
+                rows.append([time_dt.strftime('%I:%M %p'), 'RENTAL', '', '', '', '', '', time_dt.date().strftime('%Y-%m-%d'), '', '', person, ''])
         
         # Flatten all sessions across all dates
         for session_date, sessions in sorted(all_sessions.items()):
@@ -263,7 +271,7 @@ def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster,
                             role,
                             coach,
                             session_date.strftime('%Y-%m-%d'),
-                            '', '', ''
+                            '', '', '', ''
                         ])
                 else:
                     rows.append([
@@ -275,7 +283,7 @@ def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster,
                         'N/A',
                         'No coaches needed',
                         session_date.strftime('%Y-%m-%d'),
-                        '', '', ''
+                        '', '', '', ''
                     ])
         
         sheet.clear()
