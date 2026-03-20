@@ -334,12 +334,6 @@ try:
 except:
     SCHEDULE_SHEET_ID = ''
 
-# Check if we need to force a date change (from View button)
-if st.session_state.force_date_change is not None:
-    st.session_state.selected_date = st.session_state.force_date_change
-    st.session_state.force_date_change = None
-    st.rerun()
-
 # Header
 st.markdown('<div class="main-header">🏄 Multi-Day Schedule Builder</div>', unsafe_allow_html=True)
 
@@ -354,11 +348,24 @@ with col1:
         key='main_date_picker',
         help="Select the date you want to view/edit"
     )
-    # Sync the widget value to selected_date
+    # Sync the widget value to selected_date (date picker takes priority unless force_date_change is set)
     if 'main_date_picker' in st.session_state:
+        # Check if user changed date picker manually
         if st.session_state.main_date_picker != st.session_state.selected_date:
-            st.session_state.selected_date = st.session_state.main_date_picker
-            st.rerun()
+            # Only sync if there's no force change pending (View button wasn't clicked)
+            if st.session_state.force_date_change is None:
+                st.session_state.selected_date = st.session_state.main_date_picker
+                st.rerun()
+
+# Check if we need to force a date change (from View button) - do this AFTER date picker
+if st.session_state.force_date_change is not None:
+    if st.session_state.force_date_change != st.session_state.selected_date:
+        st.session_state.selected_date = st.session_state.force_date_change
+        st.session_state.force_date_change = None
+        st.rerun()
+    else:
+        # Already on the right date, just clear the flag
+        st.session_state.force_date_change = None
 
 with col2:
     if gc and SCHEDULE_SHEET_ID:
@@ -452,13 +459,24 @@ with tab1:
         st.markdown("**Set times for rental counter opening/closing**")
         col_open, col_close = st.columns(2)
         
+        # Get stored times for this date or use defaults
+        current_times = st.session_state.opening_closing_times.get(st.session_state.selected_date, {})
+        
         with col_open:
             st.markdown("**🔓 Opening**")
+            default_opening = current_times.get('opening', time(8, 0))
             opening_time = st.time_input(
                 'Opening Time',
-                value=time(8, 0),
-                key='opening_time_input'
+                value=default_opening,
+                key=f'opening_time_{st.session_state.selected_date}',
+                step=1800  # 30-minute intervals
             )
+            
+            # Store the time for this specific date
+            if st.session_state.selected_date not in st.session_state.opening_closing_times:
+                st.session_state.opening_closing_times[st.session_state.selected_date] = {}
+            st.session_state.opening_closing_times[st.session_state.selected_date]['opening'] = opening_time
+            
             opening_person_key = (st.session_state.selected_date, 'OPENING')
             opening_assigned = st.session_state.rental_assignments.get(opening_person_key, '')
             
@@ -474,19 +492,22 @@ with tab1:
             
             if new_opening != '-- Unassigned --':
                 st.session_state.rental_assignments[opening_person_key] = new_opening
-                if st.session_state.selected_date not in st.session_state.opening_closing_times:
-                    st.session_state.opening_closing_times[st.session_state.selected_date] = {}
-                st.session_state.opening_closing_times[st.session_state.selected_date]['opening'] = opening_time
             elif opening_person_key in st.session_state.rental_assignments:
                 del st.session_state.rental_assignments[opening_person_key]
         
         with col_close:
             st.markdown("**🔒 Closing**")
+            default_closing = current_times.get('closing', time(18, 0))
             closing_time = st.time_input(
                 'Closing Time',
-                value=time(18, 0),
-                key='closing_time_input'
+                value=default_closing,
+                key=f'closing_time_{st.session_state.selected_date}',
+                step=1800  # 30-minute intervals
             )
+            
+            # Store the time for this specific date
+            st.session_state.opening_closing_times[st.session_state.selected_date]['closing'] = closing_time
+            
             closing_person_key = (st.session_state.selected_date, 'CLOSING')
             closing_assigned = st.session_state.rental_assignments.get(closing_person_key, '')
             
@@ -502,9 +523,6 @@ with tab1:
             
             if new_closing != '-- Unassigned --':
                 st.session_state.rental_assignments[closing_person_key] = new_closing
-                if st.session_state.selected_date not in st.session_state.opening_closing_times:
-                    st.session_state.opening_closing_times[st.session_state.selected_date] = {}
-                st.session_state.opening_closing_times[st.session_state.selected_date]['closing'] = closing_time
             elif closing_person_key in st.session_state.rental_assignments:
                 del st.session_state.rental_assignments[closing_person_key]
         
@@ -527,7 +545,7 @@ with tab1:
     
     with col1:
         st.subheader('Session Details')
-        session_time = st.time_input('Time', value=time(9, 0), key='session_time')
+        session_time = st.time_input('Time', value=time(9, 0), key='session_time', step=1800)  # 1800 seconds = 30 minutes
         session_type = st.selectbox('Session Type', list(rules['session_types'].keys()), key='session_type')
     
     with col2:
@@ -630,6 +648,43 @@ with tab1:
 
 with tab2:
     st.header(f'Assign Coaches for {st.session_state.selected_date.strftime("%A, %b %d")}')
+    
+    # Weekly Schedule Overview - Show who's working each day
+    if st.session_state.sessions_by_date:
+        with st.expander("📅 Weekly Schedule Overview", expanded=False):
+            # Get all dates that have sessions
+            all_dates = sorted(st.session_state.sessions_by_date.keys())
+            
+            # Build a coach workload summary
+            coach_schedule = defaultdict(lambda: defaultdict(list))  # {coach: {date: [times]}}
+            
+            for date_key in all_dates:
+                for session in st.session_state.sessions_by_date[date_key]:
+                    # Check coach assignments for this session
+                    for role in session.get('roles', []):
+                        assignment_key = (session['time'], session['side'], role)
+                        if assignment_key in st.session_state.assignments:
+                            coach_name = st.session_state.assignments[assignment_key]
+                            time_str = session['time'].strftime('%I:%M %p')
+                            coach_schedule[coach_name][date_key].append(f"{time_str} {session['side'][:1]} {role[:3]}")
+            
+            # Display as table
+            if coach_schedule:
+                for coach in sorted(st.session_state.coach_roster):
+                    if coach in coach_schedule:
+                        st.markdown(f"**{coach}:**")
+                        coach_dates = coach_schedule[coach]
+                        date_cols = st.columns(min(len(all_dates), 7))
+                        for idx, date_key in enumerate(all_dates[:7]):
+                            with date_cols[idx]:
+                                assignments = coach_dates.get(date_key, [])
+                                if assignments:
+                                    st.markdown(f"**{date_key.strftime('%a %m/%d')}**")
+                                    for assignment in assignments:
+                                        st.caption(assignment)
+                                else:
+                                    st.markdown(f"~~{date_key.strftime('%a %m/%d')}~~")
+                        st.markdown('---')
     
     if not current_sessions:
         st.info(f'👈 No sessions for {st.session_state.selected_date.strftime("%b %d")}. Create some in the "Create Sessions" tab.')
@@ -738,27 +793,17 @@ with tab3:
     if not current_sessions:
         st.info('No sessions for this date')
     else:
-        # Show Opening/Closing
+        # Show OPENING at top
         if st.session_state.selected_date in st.session_state.opening_closing_times:
             times = st.session_state.opening_closing_times[st.session_state.selected_date]
             opening_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'OPENING'), 'UNASSIGNED')
-            closing_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'CLOSING'), 'UNASSIGNED')
             
-            col_o, col_c = st.columns(2)
-            with col_o:
-                opening_time_str = times.get('opening', time(8, 0)).strftime('%I:%M %p') if 'opening' in times else '8:00 AM'
+            if 'opening' in times:
+                opening_time_str = times['opening'].strftime('%I:%M %p')
                 st.markdown(f'''
                 <div style="background:#2e7d32;color:white;padding:0.75rem;border-radius:0.5rem;margin-bottom:1rem;">
                     <strong>🔓 OPENING</strong> - {opening_time_str}<br>
                     Rentals: {opening_person}
-                </div>
-                ''', unsafe_allow_html=True)
-            with col_c:
-                closing_time_str = times.get('closing', time(18, 0)).strftime('%I:%M %p') if 'closing' in times else '6:00 PM'
-                st.markdown(f'''
-                <div style="background:#c62828;color:white;padding:0.75rem;border-radius:0.5rem;margin-bottom:1rem;">
-                    <strong>🔒 CLOSING</strong> - {closing_time_str}<br>
-                    Rentals: {closing_person}
                 </div>
                 ''', unsafe_allow_html=True)
         
@@ -811,6 +856,22 @@ with tab3:
                     ''', unsafe_allow_html=True)
             
             st.markdown('---')
+        
+        # Show CLOSING at bottom
+        if st.session_state.selected_date in st.session_state.opening_closing_times:
+            times = st.session_state.opening_closing_times[st.session_state.selected_date]
+            closing_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'CLOSING'), 'UNASSIGNED')
+            
+            if 'closing' in times:
+                closing_time_str = times['closing'].strftime('%I:%M %p')
+                st.markdown(f'''
+                <div style="background:#c62828;color:white;padding:0.75rem;border-radius:0.5rem;margin-top:1rem;margin-bottom:1rem;">
+                    <strong>🔒 CLOSING</strong> - {closing_time_str}<br>
+                    Rentals: {closing_person}
+                </div>
+                ''', unsafe_allow_html=True)
+        
+        st.markdown('---')
         
         if st.button('📥 Export This Day to Excel'):
             export_data = []
