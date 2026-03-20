@@ -385,39 +385,8 @@ with col4:
             st.success("Cleared!")
             st.rerun()
 
-# Show current date prominently with navigation
-col_prev, col_date, col_next = st.columns([1, 3, 1])
-
-with col_prev:
-    if st.button("⬅️ Previous Day", use_container_width=True, key="prev_day"):
-        # Go to previous date in sessions_by_date, or just subtract 1 day
-        all_dates = sorted(st.session_state.sessions_by_date.keys())
-        if all_dates and st.session_state.selected_date in all_dates:
-            current_idx = all_dates.index(st.session_state.selected_date)
-            if current_idx > 0:
-                st.session_state.selected_date = all_dates[current_idx - 1]
-                st.rerun()
-        else:
-            # Just go back one day
-            st.session_state.selected_date = st.session_state.selected_date - timedelta(days=1)
-            st.rerun()
-
-with col_date:
-    st.markdown(f'<div class="date-badge" style="text-align:center;">📅 {st.session_state.selected_date.strftime("%A, %B %d, %Y")}</div>', unsafe_allow_html=True)
-
-with col_next:
-    if st.button("Next Day ➡️", use_container_width=True, key="next_day"):
-        # Go to next date in sessions_by_date, or just add 1 day
-        all_dates = sorted(st.session_state.sessions_by_date.keys())
-        if all_dates and st.session_state.selected_date in all_dates:
-            current_idx = all_dates.index(st.session_state.selected_date)
-            if current_idx < len(all_dates) - 1:
-                st.session_state.selected_date = all_dates[current_idx + 1]
-                st.rerun()
-        else:
-            # Just go forward one day
-            st.session_state.selected_date = st.session_state.selected_date + timedelta(days=1)
-            st.rerun()
+# Show current date prominently
+st.markdown(f'<div class="date-badge" style="text-align:center;">📅 {st.session_state.selected_date.strftime("%A, %B %d, %Y")}</div>', unsafe_allow_html=True)
 
 # Quick stats for current date
 current_sessions = st.session_state.sessions_by_date.get(st.session_state.selected_date, [])
