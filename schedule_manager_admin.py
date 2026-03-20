@@ -337,22 +337,16 @@ except:
 # Header
 st.markdown('<div class="main-header">🏄 Multi-Day Schedule Builder</div>', unsafe_allow_html=True)
 
-# Check if we need to force a date change (from View button) - do this BEFORE date picker to ensure it takes priority
-if st.session_state.force_date_change is not None:
-    st.session_state.selected_date = st.session_state.force_date_change
-    st.session_state.force_date_change = None
-    # Don't rerun here - let the date picker render with the new value
-
 # Top controls - ALWAYS VISIBLE
 col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
 with col1:
-    # Date picker that persists across tabs
+    # Date picker that persists across tabs - mainly for manual date selection
     st.date_input(
-        "📅 Working On",
+        "📅 Pick Any Date",
         value=st.session_state.selected_date,
         key='main_date_picker',
-        help="Select the date you want to view/edit"
+        help="Select any date (or use Previous/Next buttons below)"
     )
     # Sync the widget value to selected_date when user manually changes it
     if 'main_date_picker' in st.session_state:
@@ -391,8 +385,39 @@ with col4:
             st.success("Cleared!")
             st.rerun()
 
-# Show current date prominently
-st.markdown(f'<div class="date-badge">📅 {st.session_state.selected_date.strftime("%A, %B %d, %Y")}</div>', unsafe_allow_html=True)
+# Show current date prominently with navigation
+col_prev, col_date, col_next = st.columns([1, 3, 1])
+
+with col_prev:
+    if st.button("⬅️ Previous Day", use_container_width=True, key="prev_day"):
+        # Go to previous date in sessions_by_date, or just subtract 1 day
+        all_dates = sorted(st.session_state.sessions_by_date.keys())
+        if all_dates and st.session_state.selected_date in all_dates:
+            current_idx = all_dates.index(st.session_state.selected_date)
+            if current_idx > 0:
+                st.session_state.selected_date = all_dates[current_idx - 1]
+                st.rerun()
+        else:
+            # Just go back one day
+            st.session_state.selected_date = st.session_state.selected_date - timedelta(days=1)
+            st.rerun()
+
+with col_date:
+    st.markdown(f'<div class="date-badge" style="text-align:center;">📅 {st.session_state.selected_date.strftime("%A, %B %d, %Y")}</div>', unsafe_allow_html=True)
+
+with col_next:
+    if st.button("Next Day ➡️", use_container_width=True, key="next_day"):
+        # Go to next date in sessions_by_date, or just add 1 day
+        all_dates = sorted(st.session_state.sessions_by_date.keys())
+        if all_dates and st.session_state.selected_date in all_dates:
+            current_idx = all_dates.index(st.session_state.selected_date)
+            if current_idx < len(all_dates) - 1:
+                st.session_state.selected_date = all_dates[current_idx + 1]
+                st.rerun()
+        else:
+            # Just go forward one day
+            st.session_state.selected_date = st.session_state.selected_date + timedelta(days=1)
+            st.rerun()
 
 # Quick stats for current date
 current_sessions = st.session_state.sessions_by_date.get(st.session_state.selected_date, [])
@@ -401,42 +426,41 @@ if current_sessions:
     assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
     st.caption(f"📊 {len(current_sessions)} sessions | {assigned_roles}/{total_roles} roles assigned")
 
-# Week overview
+# Quick date selector - show all scheduled dates as clickable buttons
 if st.session_state.sessions_by_date:
-    with st.expander("📅 Week Overview", expanded=False):
-        week_dates = sorted(st.session_state.sessions_by_date.keys())
+    with st.expander("🗓️ Jump to Scheduled Date", expanded=False):
+        st.caption("Click a date to jump to it")
+        all_dates = sorted(st.session_state.sessions_by_date.keys())
         
-        # Create buttons in a more reliable way
-        cols = st.columns(min(len(week_dates), 7))
-        
-        for col_idx, target_date in enumerate(week_dates[:7]):
-            with cols[col_idx]:
-                session_count = len(st.session_state.sessions_by_date[target_date])
-                is_selected = target_date == st.session_state.selected_date
-                style = "background:#1f77b4;color:white;" if is_selected else "background:#f0f2f6;color:#333;"
-                
-                st.markdown(f'''
-                <div style="{style}padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
-                    <strong>{target_date.strftime("%a %m/%d")}</strong><br>
-                    {session_count} sessions
-                </div>
-                ''', unsafe_allow_html=True)
-                
-                button_label = "📍 Viewing" if is_selected else "👁️ View"
-                
-                # Use callback to ensure correct date is captured
-                def make_callback(d):
-                    def callback():
-                        st.session_state.force_date_change = d
-                    return callback
-                
-                st.button(
-                    button_label,
-                    key=f"view_btn_{target_date.isoformat()}",
-                    use_container_width=True,
-                    disabled=is_selected,
-                    on_click=make_callback(target_date)
-                )
+        # Show dates in rows of 7 (one week)
+        for week_start_idx in range(0, len(all_dates), 7):
+            week_dates = all_dates[week_start_idx:week_start_idx + 7]
+            cols = st.columns(len(week_dates))
+            
+            for idx, target_date in enumerate(week_dates):
+                with cols[idx]:
+                    session_count = len(st.session_state.sessions_by_date[target_date])
+                    is_selected = target_date == st.session_state.selected_date
+                    
+                    # Show date info
+                    if is_selected:
+                        st.markdown(f'''
+                        <div style="background:#1f77b4;color:white;padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
+                            <strong>{target_date.strftime("%a %m/%d")}</strong><br>
+                            {session_count} sessions
+                        </div>
+                        ''', unsafe_allow_html=True)
+                        st.button("📍 Current", key=f"date_{target_date.isoformat()}", use_container_width=True, disabled=True)
+                    else:
+                        st.markdown(f'''
+                        <div style="background:#f0f2f6;color:#333;padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
+                            <strong>{target_date.strftime("%a %m/%d")}</strong><br>
+                            {session_count} sessions
+                        </div>
+                        ''', unsafe_allow_html=True)
+                        if st.button("Jump", key=f"date_{target_date.isoformat()}", use_container_width=True):
+                            st.session_state.selected_date = target_date
+                            st.rerun()
 
 st.markdown('---')
 
