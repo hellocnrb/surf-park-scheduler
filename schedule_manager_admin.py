@@ -337,6 +337,12 @@ except:
 # Header
 st.markdown('<div class="main-header">🏄 Multi-Day Schedule Builder</div>', unsafe_allow_html=True)
 
+# Check if we need to force a date change (from View button) - do this BEFORE date picker to ensure it takes priority
+if st.session_state.force_date_change is not None:
+    st.session_state.selected_date = st.session_state.force_date_change
+    st.session_state.force_date_change = None
+    # Don't rerun here - let the date picker render with the new value
+
 # Top controls - ALWAYS VISIBLE
 col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
@@ -348,24 +354,11 @@ with col1:
         key='main_date_picker',
         help="Select the date you want to view/edit"
     )
-    # Sync the widget value to selected_date (date picker takes priority unless force_date_change is set)
+    # Sync the widget value to selected_date when user manually changes it
     if 'main_date_picker' in st.session_state:
-        # Check if user changed date picker manually
         if st.session_state.main_date_picker != st.session_state.selected_date:
-            # Only sync if there's no force change pending (View button wasn't clicked)
-            if st.session_state.force_date_change is None:
-                st.session_state.selected_date = st.session_state.main_date_picker
-                st.rerun()
-
-# Check if we need to force a date change (from View button) - do this AFTER date picker
-if st.session_state.force_date_change is not None:
-    if st.session_state.force_date_change != st.session_state.selected_date:
-        st.session_state.selected_date = st.session_state.force_date_change
-        st.session_state.force_date_change = None
-        st.rerun()
-    else:
-        # Already on the right date, just clear the flag
-        st.session_state.force_date_change = None
+            st.session_state.selected_date = st.session_state.main_date_picker
+            st.rerun()
 
 with col2:
     if gc and SCHEDULE_SHEET_ID:
