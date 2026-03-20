@@ -459,12 +459,37 @@ with tab1:
         with col_open:
             st.markdown("**🔓 Opening**")
             default_opening = current_times.get('opening', time(8, 0))
-            opening_time = st.time_input(
-                'Opening Time',
-                value=default_opening,
-                key=f'opening_time_{st.session_state.selected_date}',
-                step=1800  # 30-minute intervals
-            )
+            
+            # Convert default to 12-hour format
+            default_hour = default_opening.hour
+            default_ampm = 'AM'
+            if default_hour >= 12:
+                default_ampm = 'PM'
+                if default_hour > 12:
+                    default_hour -= 12
+            elif default_hour == 0:
+                default_hour = 12
+            
+            # Custom AM/PM time selector
+            open_col1, open_col2, open_col3 = st.columns([2, 2, 1])
+            with open_col1:
+                open_hour = st.selectbox('Hour', options=list(range(1, 13)), 
+                                        index=default_hour-1, 
+                                        key=f'open_hour_{st.session_state.selected_date}')
+            with open_col2:
+                open_minute = st.selectbox('Min', options=['00', '30'], 
+                                          index=0 if default_opening.minute == 0 else 1,
+                                          key=f'open_min_{st.session_state.selected_date}')
+            with open_col3:
+                open_ampm = st.selectbox('', options=['AM', 'PM'], 
+                                        index=0 if default_ampm == 'AM' else 1,
+                                        key=f'open_ampm_{st.session_state.selected_date}')
+            
+            # Convert to 24-hour time object
+            hour_24 = open_hour if open_ampm == 'AM' else (open_hour + 12 if open_hour != 12 else 12)
+            if open_ampm == 'AM' and open_hour == 12:
+                hour_24 = 0
+            opening_time = time(hour_24, int(open_minute))
             
             # Store the time for this specific date
             if st.session_state.selected_date not in st.session_state.opening_closing_times:
@@ -492,12 +517,37 @@ with tab1:
         with col_close:
             st.markdown("**🔒 Closing**")
             default_closing = current_times.get('closing', time(18, 0))
-            closing_time = st.time_input(
-                'Closing Time',
-                value=default_closing,
-                key=f'closing_time_{st.session_state.selected_date}',
-                step=1800  # 30-minute intervals
-            )
+            
+            # Convert default to 12-hour format
+            default_hour = default_closing.hour
+            default_ampm = 'AM'
+            if default_hour >= 12:
+                default_ampm = 'PM'
+                if default_hour > 12:
+                    default_hour -= 12
+            elif default_hour == 0:
+                default_hour = 12
+            
+            # Custom AM/PM time selector
+            close_col1, close_col2, close_col3 = st.columns([2, 2, 1])
+            with close_col1:
+                close_hour = st.selectbox('Hour', options=list(range(1, 13)), 
+                                         index=default_hour-1, 
+                                         key=f'close_hour_{st.session_state.selected_date}')
+            with close_col2:
+                close_minute = st.selectbox('Min', options=['00', '30'], 
+                                           index=0 if default_closing.minute == 0 else 1,
+                                           key=f'close_min_{st.session_state.selected_date}')
+            with close_col3:
+                close_ampm = st.selectbox('', options=['AM', 'PM'], 
+                                         index=0 if default_ampm == 'AM' else 1,
+                                         key=f'close_ampm_{st.session_state.selected_date}')
+            
+            # Convert to 24-hour time object
+            hour_24 = close_hour if close_ampm == 'AM' else (close_hour + 12 if close_hour != 12 else 12)
+            if close_ampm == 'AM' and close_hour == 12:
+                hour_24 = 0
+            closing_time = time(hour_24, int(close_minute))
             
             # Store the time for this specific date
             st.session_state.opening_closing_times[st.session_state.selected_date]['closing'] = closing_time
@@ -539,7 +589,22 @@ with tab1:
     
     with col1:
         st.subheader('Session Details')
-        session_time = st.time_input('Time', value=time(9, 0), key='session_time', step=1800)  # 1800 seconds = 30 minutes
+        
+        # Custom AM/PM time selector
+        time_col1, time_col2, time_col3 = st.columns([2, 2, 1])
+        with time_col1:
+            hour = st.selectbox('Hour', options=list(range(1, 13)), index=8, key='session_hour')  # Default 9
+        with time_col2:
+            minute = st.selectbox('Minute', options=['00', '30'], index=0, key='session_minute')
+        with time_col3:
+            ampm = st.selectbox('AM/PM', options=['AM', 'PM'], index=0, key='session_ampm')
+        
+        # Convert to 24-hour time object
+        hour_24 = hour if ampm == 'AM' else (hour + 12 if hour != 12 else 12)
+        if ampm == 'AM' and hour == 12:
+            hour_24 = 0
+        session_time = time(hour_24, int(minute))
+        
         session_type = st.selectbox('Session Type', list(rules['session_types'].keys()), key='session_type')
     
     with col2:
