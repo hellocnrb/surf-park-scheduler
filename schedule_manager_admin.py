@@ -779,7 +779,18 @@ with tab3:
     if not current_sessions:
         st.info('No sessions for this date')
     else:
-        # Show OPENING at top
+        # Stats at top
+        total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
+        assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric('Sessions', len(current_sessions))
+        col2.metric('Roles Needed', total_roles)
+        col3.metric('Assigned', f'{assigned_roles}/{total_roles}')
+        
+        st.markdown('---')
+        
+        # Show OPENING
         if st.session_state.selected_date in st.session_state.opening_closing_times:
             times = st.session_state.opening_closing_times[st.session_state.selected_date]
             opening_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'OPENING'), 'UNASSIGNED')
@@ -795,16 +806,7 @@ with tab3:
         
         st.markdown('---')
         
-        total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
-        assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric('Sessions', len(current_sessions))
-        col2.metric('Roles Needed', total_roles)
-        col3.metric('Assigned', f'{assigned_roles}/{total_roles}')
-        
-        st.markdown('---')
-        
+        # Sessions
         sessions_by_time = defaultdict(list)
         for session in current_sessions:
             sessions_by_time[session['time']].append(session)
