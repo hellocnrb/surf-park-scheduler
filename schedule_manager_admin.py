@@ -660,29 +660,46 @@ with tab1:
             main = sessions[0]
             
             with st.container():
-                # Header with rental assignment
+                # Header with time and current type
+                main = sessions[0]
+                st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']}")
+                
+                # Type editor - full width right under the title
+                current_type_idx = list(rules['session_types'].keys()).index(main['session_type'])
+                new_session_type = st.selectbox(
+                    'Session Type',
+                    list(rules['session_types'].keys()),
+                    index=current_type_idx,
+                    key=f'type_{time_key}_{st.session_state.selected_date}'
+                )
+                
+                # Apply type change to all sessions at this time
+                for session in sessions:
+                    session['session_type'] = new_session_type
+                
+                st.markdown('---')
+                
+                # Rental assignment
                 rental_key = (time_key, 'SESSION')
                 rental_assigned = st.session_state.rental_assignments.get(rental_key, '')
                 rental_options = ['-- Unassigned --'] + st.session_state.rental_roster
                 rental_idx = rental_options.index(rental_assigned) if rental_assigned in st.session_state.rental_roster else 0
                 
-                col_time, col_rental = st.columns([3, 2])
-                with col_time:
-                    st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']}")
-                with col_rental:
-                    st.markdown("**🏪 Rentals:**")
-                    new_rental_assign = st.selectbox(
-                        'Rental Counter',
-                        rental_options,
-                        index=rental_idx,
-                        key=f'rental_{time_key}_{st.session_state.selected_date}',
-                        label_visibility='collapsed'
-                    )
-                    
-                    if new_rental_assign != '-- Unassigned --':
-                        st.session_state.rental_assignments[rental_key] = new_rental_assign
-                    elif rental_key in st.session_state.rental_assignments:
-                        del st.session_state.rental_assignments[rental_key]
+                st.markdown("**🏪 Rentals During This Session:**")
+                new_rental_assign = st.selectbox(
+                    'Rental Counter',
+                    rental_options,
+                    index=rental_idx,
+                    key=f'rental_{time_key}_{st.session_state.selected_date}',
+                    label_visibility='collapsed'
+                )
+                
+                if new_rental_assign != '-- Unassigned --':
+                    st.session_state.rental_assignments[rental_key] = new_rental_assign
+                elif rental_key in st.session_state.rental_assignments:
+                    del st.session_state.rental_assignments[rental_key]
+                
+                st.markdown('---')
                 
                 # Sessions side by side
                 cols = st.columns(len(sessions))
@@ -711,14 +728,7 @@ with tab1:
                             key=f"p_{session['id']}"
                         )
                         
-                        session['session_type'] = st.selectbox(
-                            'Type',
-                            list(rules['session_types'].keys()),
-                            index=list(rules['session_types'].keys()).index(session['session_type']),
-                            key=f"t_{session['id']}"
-                        )
-                        
-                        # Recalculate roles
+                        # Recalculate roles based on updated type (set at session level)
                         baseline = calculate_baseline_coaches(session['session_type'], session['guests'], rules)
                         session['baseline_coaches'] = baseline
                         session['roles'] = get_required_roles(session['session_type'], baseline, session['private_lessons'])
