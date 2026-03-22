@@ -850,7 +850,40 @@ with tab2:
             )
 
 st.markdown('---')
+
+# Bottom action buttons
+if gc and SCHEDULE_SHEET_ID:
+    bottom_col1, bottom_col2, bottom_col3 = st.columns([1, 1, 2])
+    
+    with bottom_col1:
+        if st.button("🔄 Load All", use_container_width=True, key='bottom_load'):
+            with st.spinner("Loading..."):
+                loaded_sessions, loaded_assignments, loaded_staff_roster, loaded_rental_assignments, loaded_oc_times = load_from_google_sheets(gc, SCHEDULE_SHEET_ID)
+                st.session_state.sessions_by_date = loaded_sessions
+                st.session_state.assignments = loaded_assignments
+                st.session_state.staff_roster = loaded_staff_roster
+                st.session_state.rental_assignments = loaded_rental_assignments
+                st.session_state.opening_closing_times = loaded_oc_times
+                st.session_state.last_sync = datetime.now()
+                st.success("✅ Loaded!")
+                st.rerun()
+    
+    with bottom_col2:
+        if st.button("💾 Save All", use_container_width=True, key='bottom_save'):
+            with st.spinner("Saving..."):
+                if save_to_google_sheets(
+                    gc, SCHEDULE_SHEET_ID,
+                    st.session_state.sessions_by_date,
+                    st.session_state.assignments,
+                    st.session_state.staff_roster,
+                    st.session_state.rental_assignments,
+                    st.session_state.opening_closing_times
+                ):
+                    st.session_state.last_sync = datetime.now()
+                    st.success("✅ Saved!")
+
+st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.1.2 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.1.3 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.1.2')
+    st.caption('🏄 Schedule Manager v4.1.3')
