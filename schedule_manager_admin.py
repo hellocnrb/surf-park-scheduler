@@ -685,7 +685,7 @@ with tab1:
                         del st.session_state.rental_assignments[rental_key]
                 
                 # Sessions side by side
-                cols = st.columns(len(sessions) + 1)
+                cols = st.columns(len(sessions))
                 
                 for idx, session in enumerate(sessions):
                     with cols[idx]:
@@ -747,24 +747,26 @@ with tab1:
                         else:
                             st.caption('*No coaches needed*')
                         
-                        # Duplicate button
-                        if st.button('📋 Duplicate', key=f'dup_{session["id"]}', use_container_width=True):
-                            new_session = session.copy()
-                            new_session['id'] = str(uuid.uuid4())
-                            st.session_state.sessions_by_date[st.session_state.selected_date].append(new_session)
-                            st.success(f'Duplicated {session["side"]} session')
+                        st.markdown('---')
+                        
+                        # Delete this specific session button at bottom of each session
+                        if st.button('🗑️ Delete This Session', key=f'del_{session["id"]}', use_container_width=True):
+                            st.session_state.sessions_by_date[st.session_state.selected_date] = [
+                                s for s in st.session_state.sessions_by_date[st.session_state.selected_date]
+                                if s['id'] != session['id']
+                            ]
                             st.rerun()
                 
-                # Delete button in last column
-                with cols[-1]:
-                    st.write('')
-                    st.write('')
-                    if st.button('🗑️ Delete All', key=f'del_{time_key}_{st.session_state.selected_date}'):
-                        st.session_state.sessions_by_date[st.session_state.selected_date] = [
-                            s for s in st.session_state.sessions_by_date[st.session_state.selected_date]
-                            if s['time'] != time_key
-                        ]
-                        st.rerun()
+                # Duplicate button - creates both LEFT and RIGHT sessions at same time
+                st.markdown('---')
+                if st.button('📋 Duplicate Session (Both Sides)', key=f'dup_{time_key}_{st.session_state.selected_date}', use_container_width=True):
+                    # Duplicate all sessions at this time (both LEFT and RIGHT if they exist)
+                    for session in sessions:
+                        new_session = session.copy()
+                        new_session['id'] = str(uuid.uuid4())
+                        st.session_state.sessions_by_date[st.session_state.selected_date].append(new_session)
+                    st.success(f'Duplicated {time_key.strftime("%I:%M %p")} session (both sides)')
+                    st.rerun()
                 
                 st.markdown('---')
 
