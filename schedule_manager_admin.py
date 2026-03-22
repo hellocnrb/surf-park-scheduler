@@ -1,6 +1,7 @@
 """
-Surf Park Daily Schedule Builder
+Surf Park Daily Schedule Builder V2
 For Head Coaches - Multi-day scheduling with role assignment
+FIXES: Combined tabs, inline editing, duplicate prevention, opening/closing persistence
 """
 
 import streamlit as st
@@ -10,6 +11,7 @@ from collections import defaultdict
 import yaml
 import io
 import os
+import uuid
 
 st.set_page_config(page_title="Schedule Builder", page_icon="🏄", layout="wide")
 
@@ -109,190 +111,6 @@ def get_required_roles(session_type, baseline_coaches, private_lessons):
     
     return roles
 
-def load_from_google_sheets(gc, sheet_id):
-    """Load all schedules, rosters, and rental info from Google Sheets"""
-    try:
-        sheet = gc.open_by_key(sheet_id).sheet1
-        data = sheet.get_all_values()
-        
-        if len(data) < 2:
-            return {}, {}, [], [], {}, {}
-        
-        sessions_by_date = defaultdict(list)
-        assignments = {}
-        seen_sessions = set()
-        coach_roster = []
-        rental_roster = []
-        rental_assignments = {}
-        opening_closing_times = {}
-        
-        for row in data[1:]:  # Skip header
-            # Check for coach roster row
-            if len(row) >= 9 and row[0] == 'COACH_ROSTER' and row[8]:
-                coach_roster = [c.strip() for c in row[8].split(',') if c.strip()]
-                continue
-            
-            # Check for rental roster row
-            if len(row) >= 10 and row[0] == 'RENTAL_ROSTER' and row[9]:
-                rental_roster = [c.strip() for c in row[9].split(',') if c.strip()]
-                continue
-            
-            # Check for opening/closing rental assignments
-            if len(row) >= 12 and row[0] in ['OPENING', 'CLOSING']:
-                try:
-                    date_obj = datetime.strptime(row[7], "%Y-%m-%d").date()
-                    rental_assignments[(date_obj, row[0])] = row[10]
-                    if date_obj not in opening_closing_times:
-                        opening_closing_times[date_obj] = {}
-                    # Load the actual time from column 11 (OpenCloseTime)
-                    if row[11]:
-                        time_obj = datetime.strptime(row[11], "%I:%M %p").time()
-                        if row[0] == 'OPENING':
-                            opening_closing_times[date_obj]['opening'] = time_obj
-                        else:  # CLOSING
-                            opening_closing_times[date_obj]['closing'] = time_obj
-                    continue
-                except:
-                    continue
-            
-            # Check for session rental assignments
-            if len(row) >= 11 and row[1] == 'RENTAL' and row[10]:
-                try:
-                    time_str = row[0]
-                    date_str = row[7]
-                    session_datetime = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %I:%M %p")
-                    rental_assignments[(session_datetime, 'SESSION')] = row[10]
-                    continue
-                except:
-                    continue
-            
-            if len(row) >= 7:
-                try:
-                    time_str = row[0]
-                    session_datetime = datetime.strptime(f"{row[7]} {time_str}", "%Y-%m-%d %I:%M %p")
-                    session_date = session_datetime.date()
-                    
-                    # Create unique identifier for this session
-                    session_key = (session_datetime, row[2], row[1], int(row[3]), int(row[4]))
-                    
-                    # Only create session if we haven't seen this exact session before
-                    if session_key not in seen_sessions:
-                        session = {
-                            'time': session_datetime,
-                            'session_type': row[1],
-                            'side': row[2],
-                            'guests': int(row[3]),
-                            'private_lessons': int(row[4]),
-                            'baseline_coaches': 0,
-                            'roles': []
-                        }
-                        
-                        # Recalculate roles based on current rules
-                        baseline = calculate_baseline_coaches(
-                            session['session_type'],
-                            session['guests'],
-                            load_coaching_rules()
-                        )
-                        session['baseline_coaches'] = baseline
-                        session['roles'] = get_required_roles(
-                            session['session_type'],
-                            baseline,
-                            session['private_lessons']
-                        )
-                        
-                        sessions_by_date[session_date].append(session)
-                        seen_sessions.add(session_key)
-                    
-                    # Load assignment (this happens for each role row)
-                    if row[5] != 'N/A' and row[6] != 'No coaches needed' and row[6] != 'Unassigned':
-                        key = (session_datetime, row[2], row[5])
-                        assignments[key] = row[6]
-                
-                except Exception as e:
-                    continue
-        
-        # If no rosters loaded, use defaults
-        if not coach_roster:
-            coach_roster = ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
-        if not rental_roster:
-            rental_roster = ['Ella', 'Sarah', 'Mike', 'Alex']
-        
-        return dict(sessions_by_date), assignments, coach_roster, rental_roster, rental_assignments, opening_closing_times
-    
-    except Exception as e:
-        st.error(f"Error loading: {e}")
-        return {}, {}, [], [], {}, {}
-
-def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster, rental_roster, rental_assignments, opening_closing_times):
-    """Save all schedules, rosters, and rental info to Google Sheets"""
-    try:
-        sheet = gc.open_by_key(sheet_id).sheet1
-        
-        rows = [['Time', 'Session Type', 'Side', 'Guests', 'Private', 'Role', 'Coach', 'Date', 'CoachRoster', 'RentalRoster', 'RentalPerson', 'OpenCloseTime']]
-        
-        # Row 2: Save coach roster
-        if coach_roster:
-            rows.append(['COACH_ROSTER', '', '', '', '', '', '', '', ','.join(coach_roster), '', '', ''])
-        
-        # Row 3: Save rental roster
-        if rental_roster:
-            rows.append(['RENTAL_ROSTER', '', '', '', '', '', '', '', '', ','.join(rental_roster), '', ''])
-        
-        # Save rental assignments (Opening/Closing and sessions)
-        for (key, rental_type), person in rental_assignments.items():
-            if rental_type == 'OPENING':
-                date_key = key
-                time_obj = opening_closing_times.get(date_key, {}).get('opening', time(8, 0))
-                time_str = time_obj.strftime('%I:%M %p')
-                rows.append(['OPENING', '', '', '', '', '', '', date_key.strftime('%Y-%m-%d'), '', '', person, time_str])
-            elif rental_type == 'CLOSING':
-                date_key = key
-                time_obj = opening_closing_times.get(date_key, {}).get('closing', time(18, 0))
-                time_str = time_obj.strftime('%I:%M %p')
-                rows.append(['CLOSING', '', '', '', '', '', '', date_key.strftime('%Y-%m-%d'), '', '', person, time_str])
-            elif rental_type == 'SESSION':
-                time_dt = key
-                rows.append([time_dt.strftime('%I:%M %p'), 'RENTAL', '', '', '', '', '', time_dt.date().strftime('%Y-%m-%d'), '', '', person, ''])
-        
-        # Flatten all sessions across all dates
-        for session_date, sessions in sorted(all_sessions.items()):
-            for session in sessions:
-                roles = session.get('roles', [])
-                if roles:
-                    for role in roles:
-                        key = (session['time'], session['side'], role)
-                        coach = assignments.get(key, 'Unassigned')
-                        rows.append([
-                            session['time'].strftime('%I:%M %p'),
-                            session['session_type'],
-                            session['side'],
-                            session['guests'],
-                            session['private_lessons'],
-                            role,
-                            coach,
-                            session_date.strftime('%Y-%m-%d'),
-                            '', '', '', ''
-                        ])
-                else:
-                    rows.append([
-                        session['time'].strftime('%I:%M %p'),
-                        session['session_type'],
-                        session['side'],
-                        session['guests'],
-                        session['private_lessons'],
-                        'N/A',
-                        'No coaches needed',
-                        session_date.strftime('%Y-%m-%d'),
-                        '', '', '', ''
-                    ])
-        
-        sheet.clear()
-        sheet.update('A1', rows)
-        return True
-    except Exception as e:
-        st.error(f"Error saving: {e}")
-        return False
-
 def get_google_sheets_client():
     try:
         if 'gcp_service_account' in os.environ:
@@ -314,9 +132,206 @@ def get_google_sheets_client():
     except:
         return None
 
+def save_to_google_sheets(gc, sheet_id, all_sessions, assignments, coach_roster, rental_roster, rental_assignments, opening_closing_times):
+    """Save everything to Google Sheets with proper structure"""
+    try:
+        sheet = gc.open_by_key(sheet_id).sheet1
+        
+        rows = [['Type', 'SessionID', 'Date', 'Time', 'SessionType', 'Side', 'Guests', 'Private', 'Role', 'CoachName', 'RentalPerson', 'CoachRoster', 'RentalRoster']]
+        
+        # Row 2: Save coach roster
+        if coach_roster:
+            rows.append(['COACH_ROSTER', '', '', '', '', '', '', '', '', '', '', ','.join(coach_roster), ''])
+        
+        # Row 3: Save rental roster
+        if rental_roster:
+            rows.append(['RENTAL_ROSTER', '', '', '', '', '', '', '', '', '', '', '', ','.join(rental_roster)])
+        
+        # Save opening/closing times and assignments
+        for date_key, times_dict in opening_closing_times.items():
+            date_str = date_key.strftime('%Y-%m-%d')
+            
+            if 'opening' in times_dict:
+                opening_time_str = times_dict['opening'].strftime('%I:%M %p')
+                opening_person = rental_assignments.get((date_key, 'OPENING'), '')
+                rows.append(['OPENING', '', date_str, opening_time_str, '', '', '', '', '', '', opening_person, '', ''])
+            
+            if 'closing' in times_dict:
+                closing_time_str = times_dict['closing'].strftime('%I:%M %p')
+                closing_person = rental_assignments.get((date_key, 'CLOSING'), '')
+                rows.append(['CLOSING', '', date_str, closing_time_str, '', '', '', '', '', '', closing_person, '', ''])
+        
+        # Save sessions with their unique IDs
+        for session_date, sessions in sorted(all_sessions.items()):
+            for session in sessions:
+                session_id = session.get('id', str(uuid.uuid4()))
+                date_str = session_date.strftime('%Y-%m-%d')
+                time_str = session['time'].strftime('%I:%M %p')
+                
+                # Save rental assignment for this session
+                rental_key = (session['time'], 'SESSION')
+                rental_person = rental_assignments.get(rental_key, '')
+                
+                roles = session.get('roles', [])
+                if roles:
+                    for role in roles:
+                        assignment_key = (session['time'], session['side'], role)
+                        coach_name = assignments.get(assignment_key, '')
+                        rows.append([
+                            'SESSION',
+                            session_id,
+                            date_str,
+                            time_str,
+                            session['session_type'],
+                            session['side'],
+                            session['guests'],
+                            session['private_lessons'],
+                            role,
+                            coach_name,
+                            rental_person,
+                            '', ''
+                        ])
+                else:
+                    rows.append([
+                        'SESSION',
+                        session_id,
+                        date_str,
+                        time_str,
+                        session['session_type'],
+                        session['side'],
+                        session['guests'],
+                        session['private_lessons'],
+                        '',
+                        '',
+                        rental_person,
+                        '', ''
+                    ])
+        
+        sheet.clear()
+        sheet.update('A1', rows)
+        return True
+    except Exception as e:
+        st.error(f"Error saving: {e}")
+        return False
+
+def load_from_google_sheets(gc, sheet_id):
+    """Load everything from Google Sheets"""
+    try:
+        sheet = gc.open_by_key(sheet_id).sheet1
+        data = sheet.get_all_values()
+        
+        if len(data) < 2:
+            return {}, {}, [], [], {}, {}
+        
+        sessions_by_date = defaultdict(list)
+        assignments = {}
+        coach_roster = []
+        rental_roster = []
+        rental_assignments = {}
+        opening_closing_times = {}
+        seen_session_ids = set()
+        
+        for row in data[1:]:  # Skip header
+            if not row or len(row) < 2:
+                continue
+            
+            row_type = row[0]
+            
+            # Load coach roster
+            if row_type == 'COACH_ROSTER' and len(row) >= 12 and row[11]:
+                coach_roster = [c.strip() for c in row[11].split(',') if c.strip()]
+                continue
+            
+            # Load rental roster
+            if row_type == 'RENTAL_ROSTER' and len(row) >= 13 and row[12]:
+                rental_roster = [c.strip() for c in row[12].split(',') if c.strip()]
+                continue
+            
+            # Load opening/closing
+            if row_type in ['OPENING', 'CLOSING'] and len(row) >= 11:
+                try:
+                    date_obj = datetime.strptime(row[2], '%Y-%m-%d').date()
+                    time_obj = datetime.strptime(row[3], '%I:%M %p').time()
+                    
+                    if date_obj not in opening_closing_times:
+                        opening_closing_times[date_obj] = {}
+                    
+                    if row_type == 'OPENING':
+                        opening_closing_times[date_obj]['opening'] = time_obj
+                        if row[10]:
+                            rental_assignments[(date_obj, 'OPENING')] = row[10]
+                    else:  # CLOSING
+                        opening_closing_times[date_obj]['closing'] = time_obj
+                        if row[10]:
+                            rental_assignments[(date_obj, 'CLOSING')] = row[10]
+                except:
+                    continue
+            
+            # Load sessions
+            if row_type == 'SESSION' and len(row) >= 11:
+                try:
+                    session_id = row[1]
+                    date_obj = datetime.strptime(row[2], '%Y-%m-%d').date()
+                    time_obj = datetime.strptime(row[3], '%I:%M %p').time()
+                    session_datetime = datetime.combine(date_obj, time_obj)
+                    
+                    # Only create session once per session_id
+                    if session_id not in seen_session_ids:
+                        session = {
+                            'id': session_id,
+                            'time': session_datetime,
+                            'session_type': row[4],
+                            'side': row[5],
+                            'guests': int(row[6]) if row[6] else 0,
+                            'private_lessons': int(row[7]) if row[7] else 0,
+                            'baseline_coaches': 0,
+                            'roles': []
+                        }
+                        
+                        # Recalculate roles
+                        baseline = calculate_baseline_coaches(
+                            session['session_type'],
+                            session['guests'],
+                            load_coaching_rules()
+                        )
+                        session['baseline_coaches'] = baseline
+                        session['roles'] = get_required_roles(
+                            session['session_type'],
+                            baseline,
+                            session['private_lessons']
+                        )
+                        
+                        sessions_by_date[date_obj].append(session)
+                        seen_session_ids.add(session_id)
+                    
+                    # Load coach assignment
+                    if row[8] and row[9]:  # role and coach name
+                        assignment_key = (session_datetime, row[5], row[8])
+                        assignments[assignment_key] = row[9]
+                    
+                    # Load rental assignment
+                    if row[10]:
+                        rental_key = (session_datetime, 'SESSION')
+                        rental_assignments[rental_key] = row[10]
+                
+                except Exception as e:
+                    continue
+        
+        # Set defaults if not loaded
+        if not coach_roster:
+            coach_roster = ['Conner', 'Jake B', 'Kai', 'Brady', 'Jack', 'Laird']
+        if not rental_roster:
+            rental_roster = ['Ella', 'Sarah', 'Mike', 'Alex']
+        
+        return dict(sessions_by_date), assignments, coach_roster, rental_roster, rental_assignments, opening_closing_times
+    
+    except Exception as e:
+        st.error(f"Error loading: {e}")
+        return {}, {}, [], [], {}, {}
+
 # Initialize session state
 if 'sessions_by_date' not in st.session_state:
-    st.session_state.sessions_by_date = {}  # Dict of {date: [sessions]}
+    st.session_state.sessions_by_date = {}
 if 'assignments' not in st.session_state:
     st.session_state.assignments = {}
 if 'selected_date' not in st.session_state:
@@ -327,12 +342,10 @@ if 'rental_roster' not in st.session_state:
     st.session_state.rental_roster = ['Ella', 'Sarah', 'Mike', 'Alex']
 if 'last_sync' not in st.session_state:
     st.session_state.last_sync = None
-if 'force_date_change' not in st.session_state:
-    st.session_state.force_date_change = None
 if 'rental_assignments' not in st.session_state:
-    st.session_state.rental_assignments = {}  # {(datetime, 'Opening'|'Closing'|session_key): person}
+    st.session_state.rental_assignments = {}
 if 'opening_closing_times' not in st.session_state:
-    st.session_state.opening_closing_times = {}  # {date: {'opening': time, 'closing': time}}
+    st.session_state.opening_closing_times = {}
 
 rules = load_coaching_rules()
 gc = get_google_sheets_client()
@@ -343,20 +356,18 @@ except:
     SCHEDULE_SHEET_ID = ''
 
 # Header
-st.markdown('<div class="main-header">🏄 Multi-Day Schedule Builder</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🏄 Schedule Manager</div>', unsafe_allow_html=True)
 
-# Top controls - ALWAYS VISIBLE
+# Top controls
 col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
 with col1:
-    # Date picker that persists across tabs - mainly for manual date selection
     st.date_input(
         "📅 Pick Any Date",
         value=st.session_state.selected_date,
         key='main_date_picker',
-        help="Select any date (or use Previous/Next buttons below)"
+        help="Select date to view/edit"
     )
-    # Sync the widget value to selected_date when user manually changes it
     if 'main_date_picker' in st.session_state:
         if st.session_state.main_date_picker != st.session_state.selected_date:
             st.session_state.selected_date = st.session_state.main_date_picker
@@ -364,7 +375,7 @@ with col1:
 
 with col2:
     if gc and SCHEDULE_SHEET_ID:
-        if st.button("🔄 Load", use_container_width=True, help="Load schedules from Google Sheets"):
+        if st.button("🔄 Load", use_container_width=True):
             with st.spinner("Loading..."):
                 loaded_sessions, loaded_assignments, loaded_coach_roster, loaded_rental_roster, loaded_rental_assignments, loaded_oc_times = load_from_google_sheets(gc, SCHEDULE_SHEET_ID)
                 st.session_state.sessions_by_date = loaded_sessions
@@ -378,38 +389,39 @@ with col2:
                 st.rerun()
 
 with col3:
+    if gc and SCHEDULE_SHEET_ID:
+        if st.button("💾 Save", use_container_width=True):
+            with st.spinner("Saving..."):
+                if save_to_google_sheets(
+                    gc, SCHEDULE_SHEET_ID,
+                    st.session_state.sessions_by_date,
+                    st.session_state.assignments,
+                    st.session_state.coach_roster,
+                    st.session_state.rental_roster,
+                    st.session_state.rental_assignments,
+                    st.session_state.opening_closing_times
+                ):
+                    st.session_state.last_sync = datetime.now()
+                    st.success("✅ Saved!")
+
+with col4:
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state["password_correct"] = False
         st.rerun()
 
-with col4:
-    if st.button("🗑️ Clear Day", use_container_width=True, help="Clear sessions for selected date"):
-        if st.session_state.selected_date in st.session_state.sessions_by_date:
-            del st.session_state.sessions_by_date[st.session_state.selected_date]
-            # Clear assignments for this date
-            keys_to_remove = [k for k in st.session_state.assignments.keys() if k[0].date() == st.session_state.selected_date]
-            for key in keys_to_remove:
-                del st.session_state.assignments[key]
-            st.success("Cleared!")
-            st.rerun()
-
-# Show current date prominently
+# Show current date
 st.markdown(f'<div class="date-badge" style="text-align:center;">📅 {st.session_state.selected_date.strftime("%A, %B %d, %Y")}</div>', unsafe_allow_html=True)
 
-# Quick stats for current date
+# Quick date jump
 current_sessions = st.session_state.sessions_by_date.get(st.session_state.selected_date, [])
 if current_sessions:
     total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
     assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
     st.caption(f"📊 {len(current_sessions)} sessions | {assigned_roles}/{total_roles} roles assigned")
 
-# Quick date selector - show all scheduled dates as clickable buttons
 if st.session_state.sessions_by_date:
-    with st.expander("🗓️ Jump to Scheduled Date", expanded=False):
-        st.caption("Click a date to jump to it")
+    with st.expander("🗓️ Jump to Date", expanded=False):
         all_dates = sorted(st.session_state.sessions_by_date.keys())
-        
-        # Show dates in rows of 7 (one week)
         for week_start_idx in range(0, len(all_dates), 7):
             week_dates = all_dates[week_start_idx:week_start_idx + 7]
             cols = st.columns(len(week_dates))
@@ -419,95 +431,66 @@ if st.session_state.sessions_by_date:
                     session_count = len(st.session_state.sessions_by_date[target_date])
                     is_selected = target_date == st.session_state.selected_date
                     
-                    # Show date info
                     if is_selected:
-                        st.markdown(f'''
-                        <div style="background:#1f77b4;color:white;padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
-                            <strong>{target_date.strftime("%a %m/%d")}</strong><br>
-                            {session_count} sessions
-                        </div>
-                        ''', unsafe_allow_html=True)
+                        st.markdown(f'''<div style="background:#1f77b4;color:white;padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
+                            <strong>{target_date.strftime("%a %m/%d")}</strong><br>{session_count} sessions
+                        </div>''', unsafe_allow_html=True)
                         st.button("📍 Current", key=f"date_{target_date.isoformat()}", use_container_width=True, disabled=True)
                     else:
-                        st.markdown(f'''
-                        <div style="background:#f0f2f6;color:#333;padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
-                            <strong>{target_date.strftime("%a %m/%d")}</strong><br>
-                            {session_count} sessions
-                        </div>
-                        ''', unsafe_allow_html=True)
+                        st.markdown(f'''<div style="background:#f0f2f6;color:#333;padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
+                            <strong>{target_date.strftime("%a %m/%d")}</strong><br>{session_count} sessions
+                        </div>''', unsafe_allow_html=True)
                         if st.button("Jump", key=f"date_{target_date.isoformat()}", use_container_width=True):
                             st.session_state.selected_date = target_date
                             st.rerun()
 
 st.markdown('---')
 
-# Tabs
-tab1, tab2, tab3 = st.tabs(['➕ Create Sessions', '👥 Assign Coaches', '📋 View Schedule'])
+# COMBINED TAB: Manage & Assign
+tab1, tab2 = st.tabs(['📋 Manage & Assign', '👁️ View Schedule'])
 
 with tab1:
-    st.header(f'Create Sessions for {st.session_state.selected_date.strftime("%A, %b %d")}')
-    st.caption('Add sessions to this date')
+    st.header(f'Manage Sessions - {st.session_state.selected_date.strftime("%A, %b %d")}')
     
-    # Opening/Closing Rental Blocks
-    with st.expander("🏪 Opening & Closing (Rental Counter)", expanded=True):
-        st.markdown("**Set times for rental counter opening/closing**")
-        col_open, col_close = st.columns(2)
-        
-        # Get stored times for this date or use defaults
+    # Opening/Closing section
+    with st.expander("🏪 Opening & Closing", expanded=True):
         current_times = st.session_state.opening_closing_times.get(st.session_state.selected_date, {})
+        
+        col_open, col_close = st.columns(2)
         
         with col_open:
             st.markdown("**🔓 Opening**")
             default_opening = current_times.get('opening', time(8, 0))
+            default_hour_open = default_opening.hour
+            default_ampm_open = 'AM' if default_hour_open < 12 else 'PM'
+            if default_hour_open > 12:
+                default_hour_open -= 12
+            elif default_hour_open == 0:
+                default_hour_open = 12
             
-            # Convert default to 12-hour format
-            default_hour = default_opening.hour
-            default_ampm = 'AM'
-            if default_hour >= 12:
-                default_ampm = 'PM'
-                if default_hour > 12:
-                    default_hour -= 12
-            elif default_hour == 0:
-                default_hour = 12
+            oc1, oc2, oc3 = st.columns([2, 2, 1])
+            with oc1:
+                open_hour = st.selectbox('Hour', list(range(1, 13)), index=default_hour_open-1, key=f'oh_{st.session_state.selected_date}')
+            with oc2:
+                open_min = st.selectbox('Min', ['00', '30'], index=0 if default_opening.minute == 0 else 1, key=f'om_{st.session_state.selected_date}')
+            with oc3:
+                open_ap = st.selectbox('', ['AM', 'PM'], index=0 if default_ampm_open == 'AM' else 1, key=f'oa_{st.session_state.selected_date}')
             
-            # Custom AM/PM time selector
-            open_col1, open_col2, open_col3 = st.columns([2, 2, 1])
-            with open_col1:
-                open_hour = st.selectbox('Hour', options=list(range(1, 13)), 
-                                        index=default_hour-1, 
-                                        key=f'open_hour_{st.session_state.selected_date}')
-            with open_col2:
-                open_minute = st.selectbox('Min', options=['00', '30'], 
-                                          index=0 if default_opening.minute == 0 else 1,
-                                          key=f'open_min_{st.session_state.selected_date}')
-            with open_col3:
-                open_ampm = st.selectbox('', options=['AM', 'PM'], 
-                                        index=0 if default_ampm == 'AM' else 1,
-                                        key=f'open_ampm_{st.session_state.selected_date}')
-            
-            # Convert to 24-hour time object
-            hour_24 = open_hour if open_ampm == 'AM' else (open_hour + 12 if open_hour != 12 else 12)
-            if open_ampm == 'AM' and open_hour == 12:
+            hour_24 = open_hour if open_ap == 'AM' else (open_hour + 12 if open_hour != 12 else 12)
+            if open_ap == 'AM' and open_hour == 12:
                 hour_24 = 0
-            opening_time = time(hour_24, int(open_minute))
+            opening_time = time(hour_24, int(open_min))
             
-            # Store the time for this specific date
             if st.session_state.selected_date not in st.session_state.opening_closing_times:
                 st.session_state.opening_closing_times[st.session_state.selected_date] = {}
             st.session_state.opening_closing_times[st.session_state.selected_date]['opening'] = opening_time
             
             opening_person_key = (st.session_state.selected_date, 'OPENING')
             opening_assigned = st.session_state.rental_assignments.get(opening_person_key, '')
-            
             opening_options = ['-- Unassigned --'] + st.session_state.rental_roster
             opening_idx = opening_options.index(opening_assigned) if opening_assigned in st.session_state.rental_roster else 0
             
-            new_opening = st.selectbox(
-                'Opening Staff',
-                opening_options,
-                index=opening_idx,
-                key=f'opening_staff_{st.session_state.selected_date}'
-            )
+            new_opening = st.selectbox('Opening Staff', opening_options, index=opening_idx, key=f'os_{st.session_state.selected_date}')
             
             if new_opening != '-- Unassigned --':
                 st.session_state.rental_assignments[opening_person_key] = new_opening
@@ -517,53 +500,34 @@ with tab1:
         with col_close:
             st.markdown("**🔒 Closing**")
             default_closing = current_times.get('closing', time(18, 0))
+            default_hour_close = default_closing.hour
+            default_ampm_close = 'AM' if default_hour_close < 12 else 'PM'
+            if default_hour_close > 12:
+                default_hour_close -= 12
+            elif default_hour_close == 0:
+                default_hour_close = 12
             
-            # Convert default to 12-hour format
-            default_hour = default_closing.hour
-            default_ampm = 'AM'
-            if default_hour >= 12:
-                default_ampm = 'PM'
-                if default_hour > 12:
-                    default_hour -= 12
-            elif default_hour == 0:
-                default_hour = 12
+            cc1, cc2, cc3 = st.columns([2, 2, 1])
+            with cc1:
+                close_hour = st.selectbox('Hour', list(range(1, 13)), index=default_hour_close-1, key=f'ch_{st.session_state.selected_date}')
+            with cc2:
+                close_min = st.selectbox('Min', ['00', '30'], index=0 if default_closing.minute == 0 else 1, key=f'cm_{st.session_state.selected_date}')
+            with cc3:
+                close_ap = st.selectbox('', ['AM', 'PM'], index=0 if default_ampm_close == 'AM' else 1, key=f'ca_{st.session_state.selected_date}')
             
-            # Custom AM/PM time selector
-            close_col1, close_col2, close_col3 = st.columns([2, 2, 1])
-            with close_col1:
-                close_hour = st.selectbox('Hour', options=list(range(1, 13)), 
-                                         index=default_hour-1, 
-                                         key=f'close_hour_{st.session_state.selected_date}')
-            with close_col2:
-                close_minute = st.selectbox('Min', options=['00', '30'], 
-                                           index=0 if default_closing.minute == 0 else 1,
-                                           key=f'close_min_{st.session_state.selected_date}')
-            with close_col3:
-                close_ampm = st.selectbox('', options=['AM', 'PM'], 
-                                         index=0 if default_ampm == 'AM' else 1,
-                                         key=f'close_ampm_{st.session_state.selected_date}')
-            
-            # Convert to 24-hour time object
-            hour_24 = close_hour if close_ampm == 'AM' else (close_hour + 12 if close_hour != 12 else 12)
-            if close_ampm == 'AM' and close_hour == 12:
+            hour_24 = close_hour if close_ap == 'AM' else (close_hour + 12 if close_hour != 12 else 12)
+            if close_ap == 'AM' and close_hour == 12:
                 hour_24 = 0
-            closing_time = time(hour_24, int(close_minute))
+            closing_time = time(hour_24, int(close_min))
             
-            # Store the time for this specific date
             st.session_state.opening_closing_times[st.session_state.selected_date]['closing'] = closing_time
             
             closing_person_key = (st.session_state.selected_date, 'CLOSING')
             closing_assigned = st.session_state.rental_assignments.get(closing_person_key, '')
-            
             closing_options = ['-- Unassigned --'] + st.session_state.rental_roster
             closing_idx = closing_options.index(closing_assigned) if closing_assigned in st.session_state.rental_roster else 0
             
-            new_closing = st.selectbox(
-                'Closing Staff',
-                closing_options,
-                index=closing_idx,
-                key=f'closing_staff_{st.session_state.selected_date}'
-            )
+            new_closing = st.selectbox('Closing Staff', closing_options, index=closing_idx, key=f'cs_{st.session_state.selected_date}')
             
             if new_closing != '-- Unassigned --':
                 st.session_state.rental_assignments[closing_person_key] = new_closing
@@ -571,196 +535,121 @@ with tab1:
                 del st.session_state.rental_assignments[closing_person_key]
         
         # Manage rental staff roster
-        with st.expander("👥 Manage Rental Staff Roster"):
-            new_rental_staff = st.text_input('Add rental staff name', key='new_rental_staff')
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                if st.button('➕ Add Rental Staff') and new_rental_staff:
-                    if new_rental_staff not in st.session_state.rental_roster:
-                        st.session_state.rental_roster.append(new_rental_staff)
-                        st.success(f'Added {new_rental_staff}')
-                        st.rerun()
-            with col2:
-                st.info(f"Rental Staff: {', '.join(st.session_state.rental_roster)}")
+        with st.expander("👥 Manage Rental Staff"):
+            new_rental = st.text_input('Add rental staff', key='new_rental')
+            if st.button('➕ Add Rental Staff') and new_rental:
+                if new_rental not in st.session_state.rental_roster:
+                    st.session_state.rental_roster.append(new_rental)
+                    st.success(f'Added {new_rental}')
+                    st.rerun()
+            st.info(f"Rental Staff: {', '.join(st.session_state.rental_roster)}")
+    
+    # Manage coach roster
+    with st.expander('👥 Manage Coach Roster'):
+        new_coach = st.text_input('Add coach name')
+        if st.button('➕ Add Coach') and new_coach:
+            if new_coach not in st.session_state.coach_roster:
+                st.session_state.coach_roster.append(new_coach)
+                st.success(f'Added {new_coach}')
+                st.rerun()
+        st.info(f"Coach Roster: {', '.join(st.session_state.coach_roster)}")
     
     st.markdown('---')
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader('Session Details')
+    # Add new session section
+    with st.expander("➕ Add New Session", expanded=False):
+        col1, col2 = st.columns(2)
         
-        # Custom AM/PM time selector
-        time_col1, time_col2, time_col3 = st.columns([2, 2, 1])
-        with time_col1:
-            hour = st.selectbox('Hour', options=list(range(1, 13)), index=8, key='session_hour')  # Default 9
-        with time_col2:
-            minute = st.selectbox('Minute', options=['00', '30'], index=0, key='session_minute')
-        with time_col3:
-            ampm = st.selectbox('AM/PM', options=['AM', 'PM'], index=0, key='session_ampm')
+        with col1:
+            st.subheader('Time & Type')
+            tc1, tc2, tc3 = st.columns([2, 2, 1])
+            with tc1:
+                new_hour = st.selectbox('Hour', list(range(1, 13)), index=8, key='new_hour')
+            with tc2:
+                new_min = st.selectbox('Min', ['00', '30'], index=0, key='new_min')
+            with tc3:
+                new_ap = st.selectbox('AM/PM', ['AM', 'PM'], index=0, key='new_ap')
+            
+            hour_24 = new_hour if new_ap == 'AM' else (new_hour + 12 if new_hour != 12 else 12)
+            if new_ap == 'AM' and new_hour == 12:
+                hour_24 = 0
+            new_time = time(hour_24, int(new_min))
+            
+            new_type = st.selectbox('Session Type', list(rules['session_types'].keys()), key='new_type')
         
-        # Convert to 24-hour time object
-        hour_24 = hour if ampm == 'AM' else (hour + 12 if hour != 12 else 12)
-        if ampm == 'AM' and hour == 12:
-            hour_24 = 0
-        session_time = time(hour_24, int(minute))
+        with col2:
+            st.subheader(' ')
+            add_both = st.checkbox('Add LEFT and RIGHT', value=True, key='add_both_new')
         
-        session_type = st.selectbox('Session Type', list(rules['session_types'].keys()), key='session_type')
-    
-    with col2:
-        st.subheader(' ')
-        st.write('')
-        add_both = st.checkbox('Add both LEFT and RIGHT', value=True, key='add_both')
-    
-    st.markdown('---')
-    
-    col_left, col_right = st.columns(2)
-    
-    with col_left:
-        st.markdown('<div style="background:#8B4513;color:white;padding:0.5rem;border-radius:0.5rem;text-align:center;font-weight:bold;">LEFT SIDE</div>', unsafe_allow_html=True)
-        left_guests = st.number_input('Guests (LEFT)', min_value=0, max_value=30, value=0, key='left_guests')
-        left_private = st.number_input('Private Lessons (LEFT)', min_value=0, max_value=5, value=0, key='left_private')
+        col_left, col_right = st.columns(2)
         
-        left_baseline = calculate_baseline_coaches(session_type, left_guests, rules)
-        left_roles = get_required_roles(session_type, left_baseline, left_private)
+        with col_left:
+            st.markdown('**LEFT**')
+            left_g = st.number_input('Guests', 0, 30, 0, key='left_g_new')
+            left_p = st.number_input('Private', 0, 5, 0, key='left_p_new')
         
-        if left_roles:
-            st.info(f"Roles: {', '.join(left_roles)}")
-        else:
-            st.info("No coaches needed")
-    
-    with col_right:
-        st.markdown('<div style="background:#2F4F4F;color:white;padding:0.5rem;border-radius:0.5rem;text-align:center;font-weight:bold;">RIGHT SIDE</div>', unsafe_allow_html=True)
-        right_guests = st.number_input('Guests (RIGHT)', min_value=0, max_value=30, value=0, key='right_guests')
-        right_private = st.number_input('Private Lessons (RIGHT)', min_value=0, max_value=5, value=0, key='right_private')
+        with col_right:
+            st.markdown('**RIGHT**')
+            right_g = st.number_input('Guests', 0, 30, 0, key='right_g_new')
+            right_p = st.number_input('Private', 0, 5, 0, key='right_p_new')
         
-        right_baseline = calculate_baseline_coaches(session_type, right_guests, rules)
-        right_roles = get_required_roles(session_type, right_baseline, right_private)
-        
-        if right_roles:
-            st.info(f"Roles: {', '.join(right_roles)}")
-        else:
-            st.info("No coaches needed")
-    
-    st.markdown('---')
-    
-    if st.button('➕ Add Session(s)', type='primary', use_container_width=True):
-        session_datetime = datetime.combine(st.session_state.selected_date, session_time)
-        
-        if st.session_state.selected_date not in st.session_state.sessions_by_date:
-            st.session_state.sessions_by_date[st.session_state.selected_date] = []
-        
-        st.session_state.sessions_by_date[st.session_state.selected_date].append({
-            'time': session_datetime,
-            'session_type': session_type,
-            'side': 'LEFT',
-            'guests': left_guests,
-            'private_lessons': left_private,
-            'baseline_coaches': left_baseline,
-            'roles': left_roles
-        })
-        
-        if add_both:
+        if st.button('➕ Add Session(s)', type='primary'):
+            session_datetime = datetime.combine(st.session_state.selected_date, new_time)
+            
+            # Check for duplicates
+            if st.session_state.selected_date in st.session_state.sessions_by_date:
+                existing_times_sides = [(s['time'], s['side']) for s in st.session_state.sessions_by_date[st.session_state.selected_date]]
+                if (session_datetime, 'LEFT') in existing_times_sides and add_both:
+                    st.error(f"⚠️ LEFT session already exists at {new_time.strftime('%I:%M %p')}")
+                    st.stop()
+                if (session_datetime, 'RIGHT') in existing_times_sides and add_both:
+                    st.error(f"⚠️ RIGHT session already exists at {new_time.strftime('%I:%M %p')}")
+                    st.stop()
+            
+            if st.session_state.selected_date not in st.session_state.sessions_by_date:
+                st.session_state.sessions_by_date[st.session_state.selected_date] = []
+            
+            # Add LEFT
+            left_baseline = calculate_baseline_coaches(new_type, left_g, rules)
+            left_roles = get_required_roles(new_type, left_baseline, left_p)
+            
             st.session_state.sessions_by_date[st.session_state.selected_date].append({
+                'id': str(uuid.uuid4()),
                 'time': session_datetime,
-                'session_type': session_type,
-                'side': 'RIGHT',
-                'guests': right_guests,
-                'private_lessons': right_private,
-                'baseline_coaches': right_baseline,
-                'roles': right_roles
+                'session_type': new_type,
+                'side': 'LEFT',
+                'guests': left_g,
+                'private_lessons': left_p,
+                'baseline_coaches': left_baseline,
+                'roles': left_roles
             })
-        
-        st.success(f'Added to {st.session_state.selected_date.strftime("%b %d")}!')
-        st.rerun()
-    
-    # Show sessions for selected date
-    if current_sessions:
-        st.markdown('---')
-        st.subheader('Sessions for This Day')
-        
-        sessions_by_time = defaultdict(list)
-        for i, session in enumerate(current_sessions):
-            sessions_by_time[session['time']].append((i, session))
-        
-        for time_key in sorted(sessions_by_time.keys()):
-            sessions = sessions_by_time[time_key]
             
-            with st.expander(f"🕐 {time_key.strftime('%I:%M %p')} - {sessions[0][1]['session_type']}", expanded=True):
-                cols = st.columns(len(sessions) + 1)
+            # Add RIGHT if checked
+            if add_both:
+                right_baseline = calculate_baseline_coaches(new_type, right_g, rules)
+                right_roles = get_required_roles(new_type, right_baseline, right_p)
                 
-                for idx, (session_idx, session) in enumerate(sessions):
-                    with cols[idx]:
-                        st.markdown(f"**{session['side']}**")
-                        st.write(f"👥 {session['guests']} guests")
-                        st.write(f"🎓 {session['private_lessons']} private")
-                        if session['roles']:
-                            st.write(f"{', '.join(session['roles'])}")
-                
-                with cols[-1]:
-                    if st.button('🗑️', key=f'del_{time_key}_{st.session_state.selected_date}'):
-                        st.session_state.sessions_by_date[st.session_state.selected_date] = [
-                            s for s in st.session_state.sessions_by_date[st.session_state.selected_date]
-                            if s['time'] != time_key
-                        ]
-                        st.rerun()
-
-with tab2:
-    st.header(f'Assign Coaches for {st.session_state.selected_date.strftime("%A, %b %d")}')
+                st.session_state.sessions_by_date[st.session_state.selected_date].append({
+                    'id': str(uuid.uuid4()),
+                    'time': session_datetime,
+                    'session_type': new_type,
+                    'side': 'RIGHT',
+                    'guests': right_g,
+                    'private_lessons': right_p,
+                    'baseline_coaches': right_baseline,
+                    'roles': right_roles
+                })
+            
+            st.success(f'Added session at {new_time.strftime("%I:%M %p")}!')
+            st.rerun()
     
-    # Weekly Schedule Overview - Show who's working each day
-    if st.session_state.sessions_by_date:
-        with st.expander("📅 Weekly Schedule Overview", expanded=False):
-            # Get all dates that have sessions
-            all_dates = sorted(st.session_state.sessions_by_date.keys())
-            
-            # Build a coach workload summary
-            coach_schedule = defaultdict(lambda: defaultdict(list))  # {coach: {date: [times]}}
-            
-            for date_key in all_dates:
-                for session in st.session_state.sessions_by_date[date_key]:
-                    # Check coach assignments for this session
-                    for role in session.get('roles', []):
-                        assignment_key = (session['time'], session['side'], role)
-                        if assignment_key in st.session_state.assignments:
-                            coach_name = st.session_state.assignments[assignment_key]
-                            time_str = session['time'].strftime('%I:%M %p')
-                            coach_schedule[coach_name][date_key].append(f"{time_str} {session['side'][:1]} {role[:3]}")
-            
-            # Display as table
-            if coach_schedule:
-                for coach in sorted(st.session_state.coach_roster):
-                    if coach in coach_schedule:
-                        st.markdown(f"**{coach}:**")
-                        coach_dates = coach_schedule[coach]
-                        date_cols = st.columns(min(len(all_dates), 7))
-                        for idx, date_key in enumerate(all_dates[:7]):
-                            with date_cols[idx]:
-                                assignments = coach_dates.get(date_key, [])
-                                if assignments:
-                                    st.markdown(f"**{date_key.strftime('%a %m/%d')}**")
-                                    for assignment in assignments:
-                                        st.caption(assignment)
-                                else:
-                                    st.markdown(f"~~{date_key.strftime('%a %m/%d')}~~")
-                        st.markdown('---')
+    st.markdown('---')
     
+    # Display and edit existing sessions
     if not current_sessions:
-        st.info(f'👈 No sessions for {st.session_state.selected_date.strftime("%b %d")}. Create some in the "Create Sessions" tab.')
+        st.info('No sessions for this date. Add one above!')
     else:
-        with st.expander('👥 Manage Coach Roster'):
-            new_coach = st.text_input('Add coach name')
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                if st.button('➕ Add') and new_coach:
-                    if new_coach not in st.session_state.coach_roster:
-                        st.session_state.coach_roster.append(new_coach)
-                        st.success(f'Added {new_coach}')
-                        st.rerun()
-            with col2:
-                st.info(f"Roster: {', '.join(st.session_state.coach_roster)}")
-        
-        st.markdown('---')
+        st.subheader('Sessions & Assignments')
         
         sessions_by_time = defaultdict(list)
         for session in current_sessions:
@@ -770,89 +659,122 @@ with tab2:
             sessions = sessions_by_time[time_key]
             main = sessions[0]
             
-            st.markdown(f"### 🕐 {time_key.strftime('%I:%M %p')} - {main['session_type']}")
-            
-            # Rental assignment for this time slot
-            rental_key = (time_key, 'SESSION')
-            rental_assigned = st.session_state.rental_assignments.get(rental_key, '')
-            rental_options = ['-- Unassigned --'] + st.session_state.rental_roster
-            rental_idx = rental_options.index(rental_assigned) if rental_assigned in st.session_state.rental_roster else 0
-            
-            st.markdown("**🏪 Rentals During This Session:**")
-            new_rental = st.selectbox(
-                'Rental Counter Staff',
-                rental_options,
-                index=rental_idx,
-                key=f'rental_{st.session_state.selected_date}_{time_key.strftime("%H%M")}',
-                help="Who is managing rentals during this session?"
-            )
-            
-            if new_rental != '-- Unassigned --':
-                st.session_state.rental_assignments[rental_key] = new_rental
-            elif rental_key in st.session_state.rental_assignments:
-                del st.session_state.rental_assignments[rental_key]
-            
-            st.markdown('---')
-            
-            cols = st.columns(len(sessions))
-            for idx, session in enumerate(sessions):
-                with cols[idx]:
-                    bg_color = '#8B4513' if session['side'] == 'LEFT' else '#2F4F4F'
-                    st.markdown(f'''
-                    <div style="background:{bg_color};color:white;padding:1rem;border-radius:0.5rem;margin-bottom:0.5rem;">
-                        <strong>{session['side']}</strong><br>
-                        {session['guests']} guests | {session['private_lessons']} private
-                    </div>
-                    ''', unsafe_allow_html=True)
+            with st.container():
+                # Header with rental assignment
+                rental_key = (time_key, 'SESSION')
+                rental_assigned = st.session_state.rental_assignments.get(rental_key, '')
+                rental_options = ['-- Unassigned --'] + st.session_state.rental_roster
+                rental_idx = rental_options.index(rental_assigned) if rental_assigned in st.session_state.rental_roster else 0
+                
+                col_time, col_rental = st.columns([3, 2])
+                with col_time:
+                    st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']}")
+                with col_rental:
+                    st.markdown("**🏪 Rentals:**")
+                    new_rental_assign = st.selectbox(
+                        'Rental Counter',
+                        rental_options,
+                        index=rental_idx,
+                        key=f'rental_{time_key}_{st.session_state.selected_date}',
+                        label_visibility='collapsed'
+                    )
                     
-                    if session['roles']:
-                        for role_idx, role in enumerate(session['roles']):
-                            key = (session['time'], session['side'], role)
-                            assigned = st.session_state.assignments.get(key, '')
-                            
-                            options = ['-- Unassigned --'] + st.session_state.coach_roster
-                            idx_default = options.index(assigned) if assigned in st.session_state.coach_roster else 0
-                            
-                            new_assignment = st.selectbox(
-                                role,
-                                options,
-                                index=idx_default,
-                                key=f'assign_{st.session_state.selected_date}_{time_key.strftime("%H%M")}_{idx}_{role_idx}'
-                            )
-                            
-                            if new_assignment != '-- Unassigned --':
-                                st.session_state.assignments[key] = new_assignment
-                            elif key in st.session_state.assignments:
-                                del st.session_state.assignments[key]
-                    else:
-                        st.caption('*No coaches needed*')
-            
-            st.markdown('---')
-        
-        if gc and SCHEDULE_SHEET_ID:
-            if st.button('💾 Save All to Google Sheets', type='primary'):
-                if save_to_google_sheets(
-                    gc, 
-                    SCHEDULE_SHEET_ID, 
-                    st.session_state.sessions_by_date, 
-                    st.session_state.assignments, 
-                    st.session_state.coach_roster,
-                    st.session_state.rental_roster,
-                    st.session_state.rental_assignments,
-                    st.session_state.opening_closing_times
-                ):
-                    st.session_state.last_sync = datetime.now()
-                    st.success('✅ Saved all dates!')
-        else:
-            st.warning('⚠️ Google Sheets not configured')
+                    if new_rental_assign != '-- Unassigned --':
+                        st.session_state.rental_assignments[rental_key] = new_rental_assign
+                    elif rental_key in st.session_state.rental_assignments:
+                        del st.session_state.rental_assignments[rental_key]
+                
+                # Sessions side by side
+                cols = st.columns(len(sessions) + 1)
+                
+                for idx, session in enumerate(sessions):
+                    with cols[idx]:
+                        bg_color = '#8B4513' if session['side'] == 'LEFT' else '#2F4F4F'
+                        st.markdown(f'''
+                        <div style="background:{bg_color};color:white;padding:1rem;border-radius:0.5rem;margin-bottom:0.5rem;">
+                            <strong>{session['side']}</strong>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                        
+                        # Inline edit fields
+                        session['guests'] = st.number_input(
+                            'Guests',
+                            0, 30,
+                            session['guests'],
+                            key=f"g_{session['id']}"
+                        )
+                        
+                        session['private_lessons'] = st.number_input(
+                            'Private',
+                            0, 5,
+                            session['private_lessons'],
+                            key=f"p_{session['id']}"
+                        )
+                        
+                        session['session_type'] = st.selectbox(
+                            'Type',
+                            list(rules['session_types'].keys()),
+                            index=list(rules['session_types'].keys()).index(session['session_type']),
+                            key=f"t_{session['id']}"
+                        )
+                        
+                        # Recalculate roles
+                        baseline = calculate_baseline_coaches(session['session_type'], session['guests'], rules)
+                        session['baseline_coaches'] = baseline
+                        session['roles'] = get_required_roles(session['session_type'], baseline, session['private_lessons'])
+                        
+                        # Coach assignments
+                        if session['roles']:
+                            st.markdown("**Coach Assignments:**")
+                            for role_idx, role in enumerate(session['roles']):
+                                key = (session['time'], session['side'], role)
+                                assigned = st.session_state.assignments.get(key, '')
+                                
+                                options = ['-- Unassigned --'] + st.session_state.coach_roster
+                                idx_default = options.index(assigned) if assigned in st.session_state.coach_roster else 0
+                                
+                                new_assignment = st.selectbox(
+                                    role,
+                                    options,
+                                    index=idx_default,
+                                    key=f'assign_{session["id"]}_{role_idx}'
+                                )
+                                
+                                if new_assignment != '-- Unassigned --':
+                                    st.session_state.assignments[key] = new_assignment
+                                elif key in st.session_state.assignments:
+                                    del st.session_state.assignments[key]
+                        else:
+                            st.caption('*No coaches needed*')
+                        
+                        # Duplicate button
+                        if st.button('📋 Duplicate', key=f'dup_{session["id"]}', use_container_width=True):
+                            new_session = session.copy()
+                            new_session['id'] = str(uuid.uuid4())
+                            st.session_state.sessions_by_date[st.session_state.selected_date].append(new_session)
+                            st.success(f'Duplicated {session["side"]} session')
+                            st.rerun()
+                
+                # Delete button in last column
+                with cols[-1]:
+                    st.write('')
+                    st.write('')
+                    if st.button('🗑️ Delete All', key=f'del_{time_key}_{st.session_state.selected_date}'):
+                        st.session_state.sessions_by_date[st.session_state.selected_date] = [
+                            s for s in st.session_state.sessions_by_date[st.session_state.selected_date]
+                            if s['time'] != time_key
+                        ]
+                        st.rerun()
+                
+                st.markdown('---')
 
-with tab3:
-    st.header(f'Schedule for {st.session_state.selected_date.strftime("%A, %B %d, %Y")}')
+with tab2:
+    st.header(f'View Schedule - {st.session_state.selected_date.strftime("%A, %B %d, %Y")}')
     
     if not current_sessions:
-        st.info('No sessions for this date')
+        st.info('No sessions scheduled')
     else:
-        # Stats at top
+        # Stats
         total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
         assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
         
@@ -863,16 +785,14 @@ with tab3:
         
         st.markdown('---')
         
-        # Show OPENING
+        # Opening
         if st.session_state.selected_date in st.session_state.opening_closing_times:
             times = st.session_state.opening_closing_times[st.session_state.selected_date]
-            opening_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'OPENING'), 'UNASSIGNED')
-            
             if 'opening' in times:
-                opening_time_str = times['opening'].strftime('%I:%M %p')
+                opening_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'OPENING'), 'UNASSIGNED')
                 st.markdown(f'''
                 <div style="background:#2e7d32;color:white;padding:0.75rem;border-radius:0.5rem;margin-bottom:1rem;">
-                    <strong>🔓 OPENING</strong> - {opening_time_str}<br>
+                    <strong>🔓 OPENING</strong> - {times['opening'].strftime('%I:%M %p')}<br>
                     Rentals: {opening_person}
                 </div>
                 ''', unsafe_allow_html=True)
@@ -888,13 +808,11 @@ with tab3:
             sessions = sessions_by_time[time_key]
             main = sessions[0]
             
-            # Get rental assignment for this session
             rental_key = (time_key, 'SESSION')
             rental_person = st.session_state.rental_assignments.get(rental_key, 'UNASSIGNED')
             
             st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']} <span style='float:right;color:#666;font-size:0.9rem;'>🏪 Rentals: {rental_person}</span>", unsafe_allow_html=True)
             
-            # Display LEFT and RIGHT side by side
             cols = st.columns(len(sessions))
             for idx, session in enumerate(sessions):
                 with cols[idx]:
@@ -918,23 +836,22 @@ with tab3:
             
             st.markdown('---')
         
-        # Show CLOSING at bottom
+        # Closing
         if st.session_state.selected_date in st.session_state.opening_closing_times:
             times = st.session_state.opening_closing_times[st.session_state.selected_date]
-            closing_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'CLOSING'), 'UNASSIGNED')
-            
             if 'closing' in times:
-                closing_time_str = times['closing'].strftime('%I:%M %p')
+                closing_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'CLOSING'), 'UNASSIGNED')
                 st.markdown(f'''
                 <div style="background:#c62828;color:white;padding:0.75rem;border-radius:0.5rem;margin-top:1rem;margin-bottom:1rem;">
-                    <strong>🔒 CLOSING</strong> - {closing_time_str}<br>
+                    <strong>🔒 CLOSING</strong> - {times['closing'].strftime('%I:%M %p')}<br>
                     Rentals: {closing_person}
                 </div>
                 ''', unsafe_allow_html=True)
         
         st.markdown('---')
         
-        if st.button('📥 Export This Day to Excel'):
+        # Export
+        if st.button('📥 Export to Excel'):
             export_data = []
             for session in sorted(current_sessions, key=lambda x: x['time']):
                 if session['roles']:
@@ -943,23 +860,13 @@ with tab3:
                         coach = st.session_state.assignments.get(key, 'UNASSIGNED')
                         export_data.append({
                             'Time': session['time'].strftime('%I:%M %p'),
-                            'Session Type': session['session_type'],
+                            'Type': session['session_type'],
                             'Side': session['side'],
                             'Guests': session['guests'],
-                            'Private Lessons': session['private_lessons'],
+                            'Private': session['private_lessons'],
                             'Role': role,
-                            'Assigned Coach': coach
+                            'Coach': coach
                         })
-                else:
-                    export_data.append({
-                        'Time': session['time'].strftime('%I:%M %p'),
-                        'Session Type': session['session_type'],
-                        'Side': session['side'],
-                        'Guests': session['guests'],
-                        'Private Lessons': session['private_lessons'],
-                        'Role': 'N/A',
-                        'Assigned Coach': 'No coaches needed'
-                    })
             
             df = pd.DataFrame(export_data)
             output = io.BytesIO()
@@ -976,6 +883,6 @@ with tab3:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Multi-Day Schedule Builder | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")} | v3.1')
+    st.caption(f'🏄 Schedule Manager v2.0 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Multi-Day Schedule Builder | v3.1')
+    st.caption('🏄 Schedule Manager v2.0')
