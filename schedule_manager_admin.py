@@ -778,38 +778,38 @@ with tab2:
             sessions_by_time = defaultdict(list)
             for session in current_sessions:
                 sessions_by_time[session['time']].append(session)
-        
-        for time_key in sorted(sessions_by_time.keys()):
-            sessions = sessions_by_time[time_key]
-            main = sessions[0]
             
-            rental_key = (time_key, 'SESSION')
-            rental_person = st.session_state.rental_assignments.get(rental_key, 'UNASSIGNED')
-            
-            st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']} <span style='float:right;color:#666;font-size:0.9rem;'>🏪 Rentals: {rental_person}</span>", unsafe_allow_html=True)
-            
-            cols = st.columns(len(sessions))
-            for idx, session in enumerate(sessions):
-                with cols[idx]:
-                    bg_color = '#8B4513' if session['side'] == 'LEFT' else '#2F4F4F'
-                    
-                    roles_html = ''
-                    if session['roles']:
-                        for role in session['roles']:
-                            key = (session['time'], session['side'], role)
-                            coach = st.session_state.assignments.get(key, 'UNASSIGNED')
-                            roles_html += f'<div style="margin:0.25rem 0;"><strong>{role}:</strong> {coach}</div>'
-                    else:
-                        roles_html = '<em>No coaches needed</em>'
-                    
-                    st.markdown(f'''
-                    <div style="background:{bg_color};color:white;padding:1rem;border-radius:0.5rem;margin:0.5rem 0;">
-                        <strong>{session['side']}</strong> - {session['guests']} guests, {session['private_lessons']} private<br>
-                        <div style="margin-top:0.5rem;">{roles_html}</div>
-                    </div>
-                    ''', unsafe_allow_html=True)
-            
-            st.markdown('---')
+            for time_key in sorted(sessions_by_time.keys()):
+                sessions = sessions_by_time[time_key]
+                main = sessions[0]
+                
+                rental_key = (time_key, 'SESSION')
+                rental_person = st.session_state.rental_assignments.get(rental_key, 'UNASSIGNED')
+                
+                st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']} <span style='float:right;color:#666;font-size:0.9rem;'>🏪 Rentals: {rental_person}</span>", unsafe_allow_html=True)
+                
+                cols = st.columns(len(sessions))
+                for idx, session in enumerate(sessions):
+                    with cols[idx]:
+                        bg_color = '#8B4513' if session['side'] == 'LEFT' else '#2F4F4F'
+                        
+                        roles_html = ''
+                        if session['roles']:
+                            for role in session['roles']:
+                                key = (session['time'], session['side'], role)
+                                coach = st.session_state.assignments.get(key, 'UNASSIGNED')
+                                roles_html += f'<div style="margin:0.25rem 0;"><strong>{role}:</strong> {coach}</div>'
+                        else:
+                            roles_html = '<em>No coaches needed</em>'
+                        
+                        st.markdown(f'''
+                        <div style="background:{bg_color};color:white;padding:1rem;border-radius:0.5rem;margin:0.5rem 0;">
+                            <strong>{session['side']}</strong> - {session['guests']} guests, {session['private_lessons']} private<br>
+                            <div style="margin-top:0.5rem;">{roles_html}</div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                
+                st.markdown('---')
         
         # Closing (show even if no sessions)
         if st.session_state.selected_date in st.session_state.opening_closing_times:
@@ -862,81 +862,82 @@ with tab2:
                         elements.append(Spacer(1, 0.1*inch))
                 
                 # Sessions
-                sessions_by_time = defaultdict(list)
-                for session in current_sessions:
-                    sessions_by_time[session['time']].append(session)
-                
-                for time_key in sorted(sessions_by_time.keys()):
-                    sessions = sessions_by_time[time_key]
-                    main = sessions[0]
+                if current_sessions:
+                    sessions_by_time = defaultdict(list)
+                    for session in current_sessions:
+                        sessions_by_time[session['time']].append(session)
                     
-                    # Session header
-                    rental_key = (time_key, 'SESSION')
-                    rental_person = st.session_state.rental_assignments.get(rental_key, 'UNASSIGNED')
-                    
-                    header_style = ParagraphStyle(
-                        'SessionHeader',
-                        parent=styles['Heading2'],
-                        fontSize=12,
-                        textColor=colors.HexColor('#1f77b4'),
-                        spaceAfter=6
-                    )
-                    session_header = Paragraph(
-                        f"{time_key.strftime('%I:%M %p')} - {main['session_type']} | Rentals: {rental_person}",
-                        header_style
-                    )
-                    elements.append(session_header)
-                    
-                    # Build table data for this session
-                    table_data = []
-                    
-                    for session in sessions:
-                        side_color = colors.HexColor('#8B4513') if session['side'] == 'LEFT' else colors.HexColor('#2F4F4F')
+                    for time_key in sorted(sessions_by_time.keys()):
+                        sessions = sessions_by_time[time_key]
+                        main = sessions[0]
                         
-                        # Side header row
-                        table_data.append([
-                            Paragraph(f"<b>{session['side']}</b>", styles['Normal']),
-                            '',
-                            ''
-                        ])
+                        # Session header
+                        rental_key = (time_key, 'SESSION')
+                        rental_person = st.session_state.rental_assignments.get(rental_key, 'UNASSIGNED')
                         
-                        # Guest info
-                        table_data.append([
-                            'Details',
-                            f"{session['guests']} guests, {session['private_lessons']} private",
-                            ''
-                        ])
+                        header_style = ParagraphStyle(
+                            'SessionHeader',
+                            parent=styles['Heading2'],
+                            fontSize=12,
+                            textColor=colors.HexColor('#1f77b4'),
+                            spaceAfter=6
+                        )
+                        session_header = Paragraph(
+                            f"{time_key.strftime('%I:%M %p')} - {main['session_type']} | Rentals: {rental_person}",
+                            header_style
+                        )
+                        elements.append(session_header)
                         
-                        # Coach assignments
-                        if session['roles']:
-                            for role in session['roles']:
-                                key = (session['time'], session['side'], role)
-                                coach = st.session_state.assignments.get(key, 'UNASSIGNED')
-                                table_data.append([
-                                    role,
-                                    coach,
-                                    ''
-                                ])
-                        else:
-                            table_data.append(['No coaches needed', '', ''])
+                        # Build table data for this session
+                        table_data = []
                         
-                        # Separator
-                        table_data.append(['', '', ''])
-                    
-                    # Create table
-                    table = Table(table_data, colWidths=[2*inch, 2.5*inch, 2*inch])
-                    table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-                        ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
-                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, -1), 10),
-                        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                    ]))
-                    
-                    elements.append(table)
-                    elements.append(Spacer(1, 0.2*inch))
+                        for session in sessions:
+                            side_color = colors.HexColor('#8B4513') if session['side'] == 'LEFT' else colors.HexColor('#2F4F4F')
+                            
+                            # Side header row
+                            table_data.append([
+                                Paragraph(f"<b>{session['side']}</b>", styles['Normal']),
+                                '',
+                                ''
+                            ])
+                            
+                            # Guest info
+                            table_data.append([
+                                'Details',
+                                f"{session['guests']} guests, {session['private_lessons']} private",
+                                ''
+                            ])
+                            
+                            # Coach assignments
+                            if session['roles']:
+                                for role in session['roles']:
+                                    key = (session['time'], session['side'], role)
+                                    coach = st.session_state.assignments.get(key, 'UNASSIGNED')
+                                    table_data.append([
+                                        role,
+                                        coach,
+                                        ''
+                                    ])
+                            else:
+                                table_data.append(['No coaches needed', '', ''])
+                            
+                            # Separator
+                            table_data.append(['', '', ''])
+                        
+                        # Create table
+                        table = Table(table_data, colWidths=[2*inch, 2.5*inch, 2*inch])
+                        table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                            ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 10),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                        ]))
+                        
+                        elements.append(table)
+                        elements.append(Spacer(1, 0.2*inch))
                 
                 # Closing
                 if st.session_state.selected_date in st.session_state.opening_closing_times:
@@ -992,6 +993,6 @@ if gc and SCHEDULE_SHEET_ID:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.1.7 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.1.8 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.1.7')
+    st.caption('🏄 Schedule Manager v4.1.8')
