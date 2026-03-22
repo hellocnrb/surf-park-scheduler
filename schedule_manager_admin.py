@@ -741,19 +741,23 @@ with tab1:
 with tab2:
     st.header(f'View Schedule - {st.session_state.selected_date.strftime("%A, %B %d, %Y")}')
     
-    if not current_sessions:
-        st.info('No sessions scheduled')
+    # Always show opening/closing if they exist
+    has_opening_closing = st.session_state.selected_date in st.session_state.opening_closing_times
+    
+    if not current_sessions and not has_opening_closing:
+        st.info('No sessions or opening/closing times set for this date')
     else:
-        # Stats
-        total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
-        assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric('Sessions', len(current_sessions))
-        col2.metric('Roles Needed', total_roles)
-        col3.metric('Assigned', f'{assigned_roles}/{total_roles}')
-        
-        st.markdown('---')
+        # Stats (only if there are sessions)
+        if current_sessions:
+            total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
+            assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric('Sessions', len(current_sessions))
+            col2.metric('Roles Needed', total_roles)
+            col3.metric('Assigned', f'{assigned_roles}/{total_roles}')
+            
+            st.markdown('---')
         
         # Opening
         if st.session_state.selected_date in st.session_state.opening_closing_times:
@@ -767,12 +771,13 @@ with tab2:
                 </div>
                 ''', unsafe_allow_html=True)
         
-        st.markdown('---')
-        
-        # Sessions
-        sessions_by_time = defaultdict(list)
-        for session in current_sessions:
-            sessions_by_time[session['time']].append(session)
+        # Sessions (only if they exist)
+        if current_sessions:
+            st.markdown('---')
+            
+            sessions_by_time = defaultdict(list)
+            for session in current_sessions:
+                sessions_by_time[session['time']].append(session)
         
         for time_key in sorted(sessions_by_time.keys()):
             sessions = sessions_by_time[time_key]
@@ -806,7 +811,7 @@ with tab2:
             
             st.markdown('---')
         
-        # Closing
+        # Closing (show even if no sessions)
         if st.session_state.selected_date in st.session_state.opening_closing_times:
             times = st.session_state.opening_closing_times[st.session_state.selected_date]
             if 'closing' in times:
@@ -820,8 +825,9 @@ with tab2:
         
         st.markdown('---')
         
-        # Export to PDF
-        if st.button('📄 Export to PDF'):
+        # Export to PDF (only if there's something to export)
+        if current_sessions or has_opening_closing:
+            if st.button('📄 Export to PDF'):
             from reportlab.lib import colors
             from reportlab.lib.pagesizes import letter
             from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -944,12 +950,12 @@ with tab2:
             doc.build(elements)
             buffer.seek(0)
             
-            st.download_button(
-                '📄 Download PDF',
-                buffer,
-                file_name=f'schedule_{st.session_state.selected_date.strftime("%Y%m%d")}.pdf',
-                mime='application/pdf'
-            )
+                st.download_button(
+                    '📄 Download PDF',
+                    buffer,
+                    file_name=f'schedule_{st.session_state.selected_date.strftime("%Y%m%d")}.pdf',
+                    mime='application/pdf'
+                )
 
 st.markdown('---')
 
@@ -986,6 +992,6 @@ if gc and SCHEDULE_SHEET_ID:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.1.5 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.1.6 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.1.5')
+    st.caption('🏄 Schedule Manager v4.1.6')
