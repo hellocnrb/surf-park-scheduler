@@ -876,6 +876,6 @@ with tab2:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v2.0 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.1.1 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v2.0')
+    st.caption('🏄 Schedule Manager v4.1.1')
