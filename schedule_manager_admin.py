@@ -396,37 +396,12 @@ with col4:
 # Show current date
 st.markdown(f'<div class="date-badge" style="text-align:center;">📅 {st.session_state.selected_date.strftime("%A, %B %d, %Y")}</div>', unsafe_allow_html=True)
 
-# Quick date jump
+# Quick stats for current date
 current_sessions = st.session_state.sessions_by_date.get(st.session_state.selected_date, [])
 if current_sessions:
     total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
     assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
     st.caption(f"📊 {len(current_sessions)} sessions | {assigned_roles}/{total_roles} roles assigned")
-
-if st.session_state.sessions_by_date:
-    with st.expander("🗓️ Jump to Date", expanded=False):
-        all_dates = sorted(st.session_state.sessions_by_date.keys())
-        for week_start_idx in range(0, len(all_dates), 7):
-            week_dates = all_dates[week_start_idx:week_start_idx + 7]
-            cols = st.columns(len(week_dates))
-            
-            for idx, target_date in enumerate(week_dates):
-                with cols[idx]:
-                    session_count = len(st.session_state.sessions_by_date[target_date])
-                    is_selected = target_date == st.session_state.selected_date
-                    
-                    if is_selected:
-                        st.markdown(f'''<div style="background:#1f77b4;color:white;padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
-                            <strong>{target_date.strftime("%a %m/%d")}</strong><br>{session_count} sessions
-                        </div>''', unsafe_allow_html=True)
-                        st.button("📍 Current", key=f"date_{target_date.isoformat()}", use_container_width=True, disabled=True)
-                    else:
-                        st.markdown(f'''<div style="background:#f0f2f6;color:#333;padding:0.5rem;border-radius:0.5rem;text-align:center;margin-bottom:0.25rem;">
-                            <strong>{target_date.strftime("%a %m/%d")}</strong><br>{session_count} sessions
-                        </div>''', unsafe_allow_html=True)
-                        if st.button("Jump", key=f"date_{target_date.isoformat()}", use_container_width=True):
-                            st.session_state.selected_date = target_date
-                            st.rerun()
 
 st.markdown('---')
 
@@ -876,6 +851,6 @@ with tab2:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.1.1 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.1.2 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.1.1')
+    st.caption('🏄 Schedule Manager v4.1.2')
