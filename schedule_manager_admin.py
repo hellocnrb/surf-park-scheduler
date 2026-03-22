@@ -479,6 +479,8 @@ with tab1:
                 hour_24 = 0
             closing_time = time(hour_24, int(close_min))
             
+            if st.session_state.selected_date not in st.session_state.opening_closing_times:
+                st.session_state.opening_closing_times[st.session_state.selected_date] = {}
             st.session_state.opening_closing_times[st.session_state.selected_date]['closing'] = closing_time
             
             closing_person_key = (st.session_state.selected_date, 'CLOSING')
@@ -984,6 +986,6 @@ if gc and SCHEDULE_SHEET_ID:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.1.4 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.1.5 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.1.4')
+    st.caption('🏄 Schedule Manager v4.1.5')
