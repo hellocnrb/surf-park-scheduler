@@ -818,35 +818,135 @@ with tab2:
         
         st.markdown('---')
         
-        # Export
-        if st.button('📥 Export to Excel'):
-            export_data = []
-            for session in sorted(current_sessions, key=lambda x: x['time']):
-                if session['roles']:
-                    for role in session['roles']:
-                        key = (session['time'], session['side'], role)
-                        coach = st.session_state.assignments.get(key, 'UNASSIGNED')
-                        export_data.append({
-                            'Time': session['time'].strftime('%I:%M %p'),
-                            'Type': session['session_type'],
-                            'Side': session['side'],
-                            'Guests': session['guests'],
-                            'Private': session['private_lessons'],
-                            'Role': role,
-                            'Coach': coach
-                        })
+        # Export to PDF
+        if st.button('📄 Export to PDF'):
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
             
-            df = pd.DataFrame(export_data)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, sheet_name='Schedule', index=False)
-            output.seek(0)
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            # Title
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                textColor=colors.HexColor('#1f77b4'),
+                spaceAfter=12,
+                alignment=1  # Center
+            )
+            title = Paragraph(f"Schedule for {st.session_state.selected_date.strftime('%A, %B %d, %Y')}", title_style)
+            elements.append(title)
+            elements.append(Spacer(1, 0.2*inch))
+            
+            # Opening
+            if st.session_state.selected_date in st.session_state.opening_closing_times:
+                times = st.session_state.opening_closing_times[st.session_state.selected_date]
+                if 'opening' in times:
+                    opening_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'OPENING'), 'UNASSIGNED')
+                    opening_text = f"🔓 OPENING - {times['opening'].strftime('%I:%M %p')} | Rentals: {opening_person}"
+                    elements.append(Paragraph(opening_text, styles['Normal']))
+                    elements.append(Spacer(1, 0.1*inch))
+            
+            # Sessions
+            sessions_by_time = defaultdict(list)
+            for session in current_sessions:
+                sessions_by_time[session['time']].append(session)
+            
+            for time_key in sorted(sessions_by_time.keys()):
+                sessions = sessions_by_time[time_key]
+                main = sessions[0]
+                
+                # Session header
+                rental_key = (time_key, 'SESSION')
+                rental_person = st.session_state.rental_assignments.get(rental_key, 'UNASSIGNED')
+                
+                header_style = ParagraphStyle(
+                    'SessionHeader',
+                    parent=styles['Heading2'],
+                    fontSize=12,
+                    textColor=colors.HexColor('#1f77b4'),
+                    spaceAfter=6
+                )
+                session_header = Paragraph(
+                    f"{time_key.strftime('%I:%M %p')} - {main['session_type']} | Rentals: {rental_person}",
+                    header_style
+                )
+                elements.append(session_header)
+                
+                # Build table data for this session
+                table_data = []
+                
+                for session in sessions:
+                    side_color = colors.HexColor('#8B4513') if session['side'] == 'LEFT' else colors.HexColor('#2F4F4F')
+                    
+                    # Side header row
+                    table_data.append([
+                        Paragraph(f"<b>{session['side']}</b>", styles['Normal']),
+                        '',
+                        ''
+                    ])
+                    
+                    # Guest info
+                    table_data.append([
+                        'Details',
+                        f"{session['guests']} guests, {session['private_lessons']} private",
+                        ''
+                    ])
+                    
+                    # Coach assignments
+                    if session['roles']:
+                        for role in session['roles']:
+                            key = (session['time'], session['side'], role)
+                            coach = st.session_state.assignments.get(key, 'UNASSIGNED')
+                            table_data.append([
+                                role,
+                                coach,
+                                ''
+                            ])
+                    else:
+                        table_data.append(['No coaches needed', '', ''])
+                    
+                    # Separator
+                    table_data.append(['', '', ''])
+                
+                # Create table
+                table = Table(table_data, colWidths=[2*inch, 2.5*inch, 2*inch])
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                    ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ]))
+                
+                elements.append(table)
+                elements.append(Spacer(1, 0.2*inch))
+            
+            # Closing
+            if st.session_state.selected_date in st.session_state.opening_closing_times:
+                times = st.session_state.opening_closing_times[st.session_state.selected_date]
+                if 'closing' in times:
+                    closing_person = st.session_state.rental_assignments.get((st.session_state.selected_date, 'CLOSING'), 'UNASSIGNED')
+                    closing_text = f"🔒 CLOSING - {times['closing'].strftime('%I:%M %p')} | Rentals: {closing_person}"
+                    elements.append(Paragraph(closing_text, styles['Normal']))
+            
+            # Build PDF
+            doc.build(elements)
+            buffer.seek(0)
             
             st.download_button(
-                '📥 Download Excel',
-                output,
-                file_name=f'schedule_{st.session_state.selected_date.strftime("%Y%m%d")}.xlsx',
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                '📄 Download PDF',
+                buffer,
+                file_name=f'schedule_{st.session_state.selected_date.strftime("%Y%m%d")}.pdf',
+                mime='application/pdf'
             )
 
 st.markdown('---')
@@ -884,6 +984,6 @@ if gc and SCHEDULE_SHEET_ID:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.1.3 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.1.4 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.1.3')
+    st.caption('🏄 Schedule Manager v4.1.4')
