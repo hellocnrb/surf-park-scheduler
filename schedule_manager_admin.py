@@ -917,7 +917,7 @@ with tab2:
                 rental_key = (time_key, 'SESSION')
                 rental_person = st.session_state.rental_assignments.get(rental_key, 'UNASSIGNED')
                 
-                st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']} <span style='float:right;color:#666;font-size:0.9rem;'>🏪 Rentals: {rental_person}</span>", unsafe_allow_html=True)
+                st.markdown(f"### {time_key.strftime('%I:%M %p')} - {main['session_type']} <span style='color:var(--text-main);font-size:var(--font-lg);margin-left:16px;'>🏪 Rentals: {rental_person}</span>", unsafe_allow_html=True)
                 
                 cols = st.columns(len(sessions))
                 for idx, session in enumerate(sessions):
@@ -1126,6 +1126,6 @@ if gc and SCHEDULE_SHEET_ID:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.2.0 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.2.1 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.2.0')
+    st.caption('🏄 Schedule Manager v4.2.1')
