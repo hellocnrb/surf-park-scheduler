@@ -41,11 +41,138 @@ if not check_password():
 
 st.markdown('''
 <style>
-.main-header { font-size: 2rem; font-weight: bold; color: #1f77b4; text-align: center; margin: 1rem 0; }
-.date-badge { background: #1f77b4; color: white; padding: 0.5rem 1rem; border-radius: 0.5rem; display: inline-block; margin: 0.5rem 0; font-weight: bold; font-size: 1.2rem; }
-.session-card { background: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; border-left: 4px solid #1f77b4; }
-.left-side { background-color: #8B4513; color: white; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
-.right-side { background-color: #2F4F4F; color: white; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
+/* Design System Variables */
+:root {
+    --bg-dark: #121417;
+    --text-main: #E6EAF0;
+    --text-secondary: #A0A7B4;
+    --font-sm: 14px;
+    --font-base: 16px;
+    --font-lg: 18px;
+    --font-xl: 20px;
+    --font-2xl: 24px;
+    --font-3xl: 32px;
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 12px;
+    --spacing-base: 16px;
+    --spacing-lg: 24px;
+}
+
+/* Global Typography */
+.main {
+    font-size: var(--font-base);
+    color: var(--text-main);
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+/* Main Header */
+.main-header { 
+    font-size: var(--font-3xl);
+    font-weight: 600;
+    color: var(--text-main);
+    text-align: center;
+    margin: var(--spacing-base) 0;
+    letter-spacing: -0.02em;
+}
+
+/* Date Badge */
+.date-badge { 
+    background: var(--bg-dark);
+    color: var(--text-main);
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-radius: 8px;
+    display: inline-block;
+    margin: var(--spacing-md) 0;
+    font-weight: 500;
+    font-size: var(--font-xl);
+    letter-spacing: -0.01em;
+    border: 1px solid rgba(230, 234, 240, 0.1);
+}
+
+/* Session Cards */
+.session-card { 
+    background: var(--bg-dark);
+    padding: var(--spacing-base);
+    border-radius: 8px;
+    margin: var(--spacing-md) 0;
+    border-left: 3px solid var(--text-main);
+    font-size: var(--font-base);
+}
+
+/* Side Cards */
+.left-side { 
+    background: linear-gradient(135deg, #8B4513 0%, #6B3410 100%);
+    color: var(--text-main);
+    padding: var(--spacing-base);
+    border-radius: 8px;
+    margin: var(--spacing-md) 0;
+    font-size: var(--font-base);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.right-side { 
+    background: linear-gradient(135deg, #2F4F4F 0%, #1F3F3F 100%);
+    color: var(--text-main);
+    padding: var(--spacing-base);
+    border-radius: 8px;
+    margin: var(--spacing-md) 0;
+    font-size: var(--font-base);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Streamlit Overrides */
+.stButton button {
+    font-size: var(--font-base);
+    border-radius: 6px;
+    padding: var(--spacing-sm) var(--spacing-base);
+    font-weight: 500;
+}
+
+.stSelectbox label, .stTextInput label, .stNumberInput label {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.stExpander {
+    border: 1px solid rgba(230, 234, 240, 0.1);
+    border-radius: 8px;
+    margin: var(--spacing-md) 0;
+}
+
+.stMetric {
+    background: var(--bg-dark);
+    padding: var(--spacing-base);
+    border-radius: 8px;
+    border: 1px solid rgba(230, 234, 240, 0.1);
+}
+
+.stMetric label {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+
+.stMetric [data-testid="stMetricValue"] {
+    font-size: var(--font-2xl);
+    color: var(--text-main);
+}
+
+/* Captions */
+caption, .caption {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+
+/* Info/Warning boxes */
+.stAlert {
+    font-size: var(--font-base);
+    border-radius: 8px;
+}
 </style>
 ''', unsafe_allow_html=True)
 
@@ -332,6 +459,8 @@ if 'rental_assignments' not in st.session_state:
     st.session_state.rental_assignments = {}
 if 'opening_closing_times' not in st.session_state:
     st.session_state.opening_closing_times = {}
+if 'has_loaded' not in st.session_state:
+    st.session_state.has_loaded = False
 
 rules = load_coaching_rules()
 gc = get_google_sheets_client()
@@ -370,12 +499,14 @@ with col2:
                 st.session_state.rental_assignments = loaded_rental_assignments
                 st.session_state.opening_closing_times = loaded_oc_times
                 st.session_state.last_sync = datetime.now()
+                st.session_state.has_loaded = True  # Enable save button
                 st.success("✅ Loaded!")
                 st.rerun()
 
 with col3:
     if gc and SCHEDULE_SHEET_ID:
-        if st.button("💾 Save", use_container_width=True):
+        save_disabled = not st.session_state.has_loaded
+        if st.button("💾 Save", use_container_width=True, disabled=save_disabled, help="Load data first before saving" if save_disabled else "Save all changes"):
             with st.spinner("Saving..."):
                 if save_to_google_sheets(
                     gc, SCHEDULE_SHEET_ID,
@@ -974,11 +1105,13 @@ if gc and SCHEDULE_SHEET_ID:
                 st.session_state.rental_assignments = loaded_rental_assignments
                 st.session_state.opening_closing_times = loaded_oc_times
                 st.session_state.last_sync = datetime.now()
+                st.session_state.has_loaded = True  # Enable save button
                 st.success("✅ Loaded!")
                 st.rerun()
     
     with bottom_col2:
-        if st.button("💾 Save All", use_container_width=True, key='bottom_save'):
+        save_disabled_bottom = not st.session_state.has_loaded
+        if st.button("💾 Save All", use_container_width=True, key='bottom_save', disabled=save_disabled_bottom, help="Load data first before saving" if save_disabled_bottom else "Save all changes"):
             with st.spinner("Saving..."):
                 if save_to_google_sheets(
                     gc, SCHEDULE_SHEET_ID,
@@ -993,6 +1126,6 @@ if gc and SCHEDULE_SHEET_ID:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.1.8 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.2.0 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.1.8')
+    st.caption('🏄 Schedule Manager v4.2.0')
