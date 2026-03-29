@@ -51,7 +51,7 @@ session_types:
         notes: "Advanced riders - no baseline coaching needed"
     coach_roles: []
     
-  Advanced Turns:
+  Advanced_Turns:
     capacity: 12
     baseline_rules:
       - guest_range: [0, 999]
@@ -59,7 +59,7 @@ session_types:
         notes: "Advanced riders - no baseline coaching needed"
     coach_roles: []
     
-  Expert Turns:
+  Expert_Turns:
     capacity: 12
     baseline_rules:
       - guest_range: [0, 999]
@@ -67,7 +67,7 @@ session_types:
         notes: "Expert riders - no baseline coaching needed"
     coach_roles: []
     
-  Pro Turns:
+  Pro_Turns:
     capacity: 10
     baseline_rules:
       - guest_range: [0, 999]
@@ -75,7 +75,7 @@ session_types:
         notes: "Pro riders - no baseline coaching needed"
     coach_roles: []
 
-  Advanced Barrel:
+  Advanced_Barrel:
     capacity: 12
     baseline_rules:
       - guest_range: [0, 999]
@@ -83,7 +83,7 @@ session_types:
         notes: "Advanced riders - no baseline coaching needed"
     coach_roles: []
     
-  Expert Barrel:
+  Expert_Barrel:
     capacity: 12
     baseline_rules:
       - guest_range: [0, 999]
@@ -91,7 +91,7 @@ session_types:
         notes: "Expert riders - no baseline coaching needed"
     coach_roles: []
     
-  Pro Barrel:
+  Pro_Barrel:
     capacity: 10
     baseline_rules:
       - guest_range: [0, 999]
