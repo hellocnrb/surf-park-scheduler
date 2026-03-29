@@ -80,18 +80,23 @@ h1, h2, h3, h4, h5, h6 {
     letter-spacing: -0.02em;
 }
 
-/* Date Badge */
+/* Date Badge - Sticky at top */
 .date-badge { 
-    background: var(--bg-dark);
+    background: rgba(18, 20, 23, 0.95);
     color: var(--text-main);
-    padding: var(--spacing-md) var(--spacing-lg);
-    border-radius: 8px;
-    display: inline-block;
-    margin: var(--spacing-md) 0;
+    padding: var(--spacing-sm) var(--spacing-base);
+    border-radius: 0;
+    display: block;
+    margin: 0;
     font-weight: 500;
-    font-size: var(--font-xl);
+    font-size: var(--font-base);
     letter-spacing: -0.01em;
-    border: 1px solid rgba(230, 234, 240, 0.1);
+    border-bottom: 1px solid rgba(230, 234, 240, 0.1);
+    position: sticky;
+    top: 0;
+    z-index: 999;
+    backdrop-filter: blur(10px);
+    text-align: center;
 }
 
 /* Session Cards */
@@ -524,15 +529,16 @@ with col4:
         st.session_state["password_correct"] = False
         st.rerun()
 
-# Show current date
-st.markdown(f'<div class="date-badge" style="text-align:center;">📅 {st.session_state.selected_date.strftime("%A, %B %d, %Y")}</div>', unsafe_allow_html=True)
-
-# Quick stats for current date
+# Show current date - sticky at top
 current_sessions = st.session_state.sessions_by_date.get(st.session_state.selected_date, [])
 if current_sessions:
     total_roles = sum(len(s.get('roles', [])) for s in current_sessions)
     assigned_roles = sum(1 for (dt, side, role) in st.session_state.assignments.keys() if dt.date() == st.session_state.selected_date)
-    st.caption(f"📊 {len(current_sessions)} sessions | {assigned_roles}/{total_roles} roles assigned")
+    stats_text = f" • {len(current_sessions)} sessions • {assigned_roles}/{total_roles} assigned"
+else:
+    stats_text = ""
+
+st.markdown(f'<div class="date-badge">📅 {st.session_state.selected_date.strftime("%a %b %d, %Y")}{stats_text}</div>', unsafe_allow_html=True)
 
 st.markdown('---')
 
@@ -1126,6 +1132,6 @@ if gc and SCHEDULE_SHEET_ID:
 
 st.markdown('---')
 if st.session_state.last_sync:
-    st.caption(f'🏄 Schedule Manager v4.2.1 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
+    st.caption(f'🏄 Schedule Manager v4.2.2 | Last saved: {st.session_state.last_sync.strftime("%I:%M %p")}')
 else:
-    st.caption('🏄 Schedule Manager v4.2.1')
+    st.caption('🏄 Schedule Manager v4.2.2')
